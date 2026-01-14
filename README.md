@@ -1,0 +1,177 @@
+# 🌌 GyanBridge: System Architecture & Capabilities
+**Version 2.0 | Built for High-Recall Data Harvesting**
+
+## 1. How It Works (The Core Process)
+Nebula is not just a scraper; it is an **Intelligence Orchestrator**. When you click "SCAN", the following pipeline executes:
+
+**1. Intent Recognition (The Brain)**
+*   The system analyzes your query (e.g., "Christian persecution trends").
+*   It activates specific "Search Intents" (Faith Data, News, Academic, Social).
+
+**2. The Orchestrator (The Conductor)**
+*   Located in `server/src/orchestrator.py`.
+*   It converts your topic into advanced **Boolean Dorks** (e.g., `site:opendoors.org OR site:cbn.com "persecution"`).
+*   It fires these queries in parallel across multiple engines (Google Deep Search & DuckDuckGo).
+
+**3. Intelligent Filtering (The Guard)**
+*   **Noise Cancellation**: It strips out filler words ("details", "about") to focus on core keywords.
+*   **Ratio Check**: A result is rejected unless it matches >50% of your specific keywords.
+*   **Aggressive Deduplication**: It detects identical content even if the URLs are slightly different (e.g., stripping tracking codes).
+
+**4. Meta-Enrichment (The Eyes)**
+*   The `SearchAgents` visit the top results in real-time.
+*   They extract high-quality visuals (Open Graph images) and descriptions directly from the source code, replacing generic placeholders.
+
+**5. Antigravity UI (The Face)**
+*   The React frontend receives the clean JSON data.
+*   It renders "Data Pods" with levitation physics and holographic effects.
+
+---
+
+## 2. Model Capabilities
+
+### 🛡️ The Orchestrator Model
+*   **Role**: Decision Maker.
+*   **Capability**:
+    *   **Intent Mapping**: Knows that "Church" implies `site:christianpost.com` and `site:cbn.com`.
+    *   **Smart Filter**: Can distinguish between a "Windows Update" and a "Christian Conference Update" based on context.
+    *   **Deduplication**: Ensures you never see the same article twice.
+
+### 🕵️ The Search Agents
+*   **Role**: Data Retrievers.
+*   **Capability**:
+    *   **Multi-Source Hopping**: Can jump between News, Academic Papers (Pew Research), and Social Forums simultaneously.
+    *   **Meta-Scraping**: Fetches the "real" image representing the article, not just a logo.
+
+### 🔮 The Visual Engine (Nebula UI)
+*   **Role**: Visualization.
+*   **Capability**:
+    *   **Glassmorphism**: Frosted glass panels for a modern "Head-Up Display" feel.
+    *   **Physics**: Elements react to your mouse (Tilt, Glare, Levitation).
+    *   **Data Layout**: Optimized "Horizontal Pods" (Data Left, Visuals Right) for rapid scanning.
+
+---
+
+## 3. Data Sources (Active Coverage)
+We have trained the model to specifically target:
+
+*   **Faith & News**: The Christian Post, CBN News, TBN.
+*   **Research**: Pew Research Center, Center for Study of Global Christianity.
+*   **Advocacy**: Open Doors (World Watch List).
+*   **Global Web**: CNN, BBC, Reuters (for cross-referencing).
+
+---
+
+## 4. Main Entry Point
+
+**Primary File:** `server/api.py`
+
+This is the main Flask application that powers the entire Nebula system. It:
+- Serves the web interface at `http://localhost:5000`
+- Provides all API endpoints for search, scraping, news feed, and analytics
+- Initializes core components (Orchestrator, RAG Engine, News Feeder, Predictor)
+- Runs on port 5000 by default (configurable via `.env`)
+
+---
+
+## 5. How to Run (Windows Guide)
+
+### Prerequisites
+- Python 3.8 or higher installed
+- Git (optional, for cloning)
+
+### Step 1: Navigate to Project Directory
+Open PowerShell or Command Prompt and navigate to the project root:
+```powershell
+cd d:\GB_web_scraber
+```
+
+### Step 2: Create and Activate Virtual Environment
+**Critical**: Ensure you are using a clean environment. If you have opened a terminal before, close it and open a new one.
+
+**Option A: PowerShell (Recommended)**
+```powershell
+# 1. Create environment
+python -m venv venv
+
+# 2. Activate it
+.\venv\Scripts\Activate
+
+# 3. VERIFY activation
+# You should see (venv) at the start of your line.
+# Run this to confirm you are using the venv python:
+Get-Command python
+# Output should end with: ...\venv\Scripts\python.exe
+```
+
+**Option B: Command Prompt (cmd.exe)**
+```cmd
+python -m venv venv
+venv\Scripts\activate.bat
+where python
+```
+
+### Step 3: Install Dependencies
+Ensure you see `(venv)` in your terminal before running this:
+```bash
+pip install -r server/requirements.txt
+```
+*If you see "Requirement already satisfied", verify you're in the correct virtual environment!*
+
+### Step 4: Configure Environment Variables
+Create a `.env` file in the `server/` directory with your API keys:
+```env
+OPENAI_API_KEY=your_openai_api_key_here
+```
+
+**Note:** The application uses OpenAI's GPT models for analytics:
+- **Primary Model:** GPT-4 Turbo (for high-quality analysis)
+- **Fallback Model:** GPT-3.5 Turbo (for speed and cost optimization)
+
+### Step 5: Launch the Application
+Navigate to the server directory and run the main file:
+```bash
+cd server
+python api.py
+```
+
+**Or from the project root:**
+```bash
+python server/api.py
+```
+
+The application will start on **[http://localhost:5000](http://localhost:5000)**
+
+You should see output similar to:
+```
+ * Running on http://0.0.0.0:5000
+ * Debug mode: on
+```
+
+Open your browser and navigate to `http://localhost:5000` to access the Nebula interface.
+
+### 🔧 Troubleshooting
+**Error: `ModuleNotFoundError: No module named 'flask'`**
+*   **Cause**: You installed dependencies in one environment (e.g., global or `.venv`) but are trying to run in another (e.g., `venv`).
+*   **Fix**:
+    1.  Close your terminal.
+    2.  Open a new terminal in `d:\GB_web_scraber`.
+    3.  Run `.\venv\Scripts\Activate`.
+    4.  Run `python server/api.py`.
+
+
+---
+
+## 6. 🧠 Admin Watchtower (New AI Analytics)
+Nebula now features **"Antigravity Analytics"**, a RAG-powered engine that lets you talk to your data.
+
+### How to Access:
+1. Open the main app (`localhost:5000`).
+2. Click the **Admin Icon** (👤) in the top-right corner.
+3. Login using the default key: `admin123`.
+
+### Capabilities:
+*   **Natural Language Queries**: Ask "What is the trend of Christian persecution in Nigeria?"
+*   **RAG Engine**: Retrieves cached articles using HuggingFace embeddings (all-MiniLM-L6-v2 model).
+*   **LLM Synthesis**: OpenAI GPT-4 Turbo analyzes the data with high accuracy, falling back to GPT-3.5 Turbo for speed.
+*   **Auto-Retry**: Robust handling of API rate limits ensures stability.

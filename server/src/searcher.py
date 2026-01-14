@@ -1,0 +1,307 @@
+from ddgs import DDGS
+from datetime import datetime
+from youtube_transcript_api import YouTubeTranscriptApi
+import arxiv
+import time # Ensure time is imported
+
+import feedparser
+import re
+import requests
+from src.resource_definitions import CHRISTIAN_SOURCES
+
+class DiscoveryEngine:
+    def __init__(self):
+        pass
+
+    def get_trending_videos(self, max_results=30):
+        """
+        Fetches trending Christian-related videos by cycling through popular queries.
+        Applies strict keyword filtering to ensure relevance.
+        """
+        import random
+        from urllib.parse import urlparse, parse_qs
+        
+        now = datetime.now()
+        current_year = now.year
+        current_month = now.strftime("%B") # e.g. "January"
+        
+        # [FIX] Simplified & Diversified Queries
+        queries = [
+            f"Christian World News {current_month} {current_year}",
+            f"Global Christian Persecution Report {current_year}",
+            f"Top Christian Worship Songs {current_year} Official",
+            f"Powerful Christian Sermons {current_month} {current_year}",
+            f"Christian Testimony Viral {current_year}",
+            "Vatican News English latest",
+            "CNA News Video Catholic",
+            f"International Christian Concern {current_year}",
+            f"Voice of the Martyrs {current_year}",
+            f"Christian Documentary {current_year}"
+        ]
+        
+        random.shuffle(queries)
+        
+        all_videos = []
+        # Cycle through queries to get a mix
+        for q in queries:
+            # [FIX] Enforce 'm' (Past Month) time filter to avoid old videos
+            vids = self.search_youtube(q, max_results=5, timelimit='m')
+            all_videos.extend(vids)
+            
+            # [OPTIMIZATION] Break early if we have enough candidates (2x max_results to allow for deduping)
+            if len(all_videos) >= max_results * 2:
+                break
+                
+            time.sleep(1.0) 
+            
+        # Deduplicate using Video ID
+        unique_videos = []
+        seen_ids = set()
+        
+        # Keywords for validation
+        valid_keywords = [
+            'christian', 'church', 'jesus', 'god', 'gospel', 'bible', 'pastor', 'bishop', 
+            'pope', 'vatican', 'catholic', 'worship', 'sermon', 'testimony', 'faith', 
+            'prayer', 'mission', 'ministry', 'persecution', 'attack', 'report', 'news', 
+            'update', 'documentary', 'joshua', 'hillsong', 'bethel', 'elevation'
+        ]
+        
+        for v in all_videos:
+            vid_id = self._extract_video_id(v['url'])
+            if vid_id and vid_id not in seen_ids:
+                # Relevance Check
+                title_lower = v['title'].lower()
+                is_relevant = any(k in title_lower for k in valid_keywords)
+                
+                if is_relevant:
+                    seen_ids.add(vid_id)
+                    unique_videos.append(v)
+                
+        return unique_videos[:max_results]
+
+    def _extract_video_id(self, url):
+        """Helper to extract YouTube Video ID from various URL formats."""
+        try:
+            from urllib.parse import urlparse, parse_qs
+            parsed = urlparse(url)
+            if "youtube.com" in parsed.netloc:
+                return parse_qs(parsed.query).get('v', [None])[0]
+            elif "youtu.be" in parsed.netloc:
+                return parsed.path.lstrip('/')
+            return url # Fallback to URL if not standard YT
+        except:
+            return url
+
+    def discover(self, topic, max_results=50):
+        """
+        Orchestrates discovery across all supported platforms.
+        Returns a list of dicts: {'url', 'source_type', 'title', 'metadata'}
+        """
+        results = []
+        print(f"🌟 Starting Discovery for: {topic}")
+        
+        # 1. Search Web (General + News)
+        web_results = self.search_web(topic, max_results=max_results // 2)
+        results.extend(web_results)
+        
+        # 2. Search Video (YouTube)
+        video_results = self.search_youtube(topic, max_results=max_results // 4)
+        results.extend(video_results)
+        
+        # 3. Search Academic (Arxiv)
+        paper_results = self.search_arxiv_papers(topic, max_results=max_results // 5)
+        results.extend(paper_results)
+        
+        # 4. Search Social (Reddit/Quora specifically)
+        social_results = self.search_social(topic, max_results=max_results // 5)
+        results.extend(social_results)
+
+        # 5. Search Trusted Christian Sources (Deep Scan)
+        trusted_results = self.search_trusted_sources(topic, max_results=max_results // 2)
+        results.extend(trusted_results)
+
+        # Deduplicate by URL
+        unique_results = []
+        seen_urls = set()
+        for r in results:
+            if r['url'] not in seen_urls:
+                seen_urls.add(r['url'])
+                unique_results.append(r)
+        
+        print(f"✅ Discovery Complete: Found {len(unique_results)} unique items.")
+        return unique_results
+
+    def _is_valid_content(self, text):
+        """
+        Checks if text contains Chinese characters or other unwanted scripts.
+        """
+        if not text: return True
+        # Check for Chinese characters
+        for char in text:
+            if '\u4e00' <= char <= '\u9fff':
+                return False
+        return True
+
+    def search_web(self, topic, max_results=20, region='wt-wt', include_news=True):
+        items = []
+        print(f"  🔍 Querying Web & News ({region})...")
+        try:
+            with DDGS() as ddgs:
+                # General Search
+                gen_results = ddgs.text(topic, region=region, max_results=max_results)
+                for r in gen_results:
+                    # [FIX] Filter out Chinese content
+                    if not self._is_valid_content(r['title']) or not self._is_valid_content(r['body']):
+                        continue
+                        
+                    items.append({
+                        'url': r['href'],
+                        'title': r['title'],
+                        'source_type': 'web',
+                        'metadata': {'snippet': r['body']}
+                    })
+                
+                # News Search - Force Freshness
+                # Only if requested (skip for direct site searches)
+                if include_news:
+                    # Adding "latest" to topic sometimes helps DDG's algorithm
+                    news_topic = f"{topic} latest"
+                    news_results = ddgs.news(news_topic, region=region, max_results=max_results // 2)
+                    for r in news_results:
+                        # [FIX] Filter out Chinese content
+                        if not self._is_valid_content(r['title']):
+                            continue
+
+                        items.append({
+                            'url': r['url'],
+                            'title': r['title'],
+                            'source_type': 'news',
+                            'metadata': {'date': r.get('date'), 'source': r.get('source')}
+                        })
+        except Exception as e:
+            print(f"  ❌ Web Search Error: {e}")
+        return items
+
+    def search_youtube(self, topic, max_results=10, timelimit=None):
+        """
+        Finds YouTube videos. 
+        Note: Using DDGS video search as a proxy since we don't have a YouTube Data API key.
+        """
+        items = []
+        print(f"  🎥 Querying YouTube ({timelimit if timelimit else 'all'})...")
+        try:
+            with DDGS() as ddgs:
+                # [FIX] Pass timelimit to ddgs.videos (e.g., 'm' for month)
+                results = ddgs.videos(topic, region='wt-wt', max_results=max_results, timelimit=timelimit)
+                for r in results:
+                    # [FIX] Filter out Chinese content
+                    if not self._is_valid_content(r.get('title')):
+                        continue
+                        
+                    # r usually has 'content' url or similar
+                    url = r.get('content') or r.get('embed_url') # check structure
+                    # Fallback to reconstructing if we have ID. 
+                    # DDGS videos return a dict with 'content' (link) typically.
+                    if url and "youtube.com" in url or "youtu.be" in url:
+                        items.append({
+                            'url': url,
+                            'title': r.get('title', 'Video'),
+                            'source_type': 'video',
+                            'metadata': {'duration': r.get('duration'), 'views': r.get('statistics',{}).get('viewCount')}
+                        })
+        except Exception as e:
+             # Fallback: simple web search for youtube.com
+             print(f"  ❌ YouTube Search Error: {e}")
+             pass
+        return items
+
+    def search_arxiv_papers(self, topic, max_results=5):
+        items = []
+        print(f"  🎓 Querying Arxiv...")
+        try:
+            search = arxiv.Search(
+                query=topic,
+                max_results=max_results,
+                sort_by=arxiv.SortCriterion.Relevance
+            )
+            for result in search.results():
+                items.append({
+                    'url': result.pdf_url,
+                    'title': result.title,
+                    'source_type': 'paper',
+                    'metadata': {'authors': [a.name for a in result.authors], 'published': str(result.published)}
+                })
+        except Exception as e:
+            print(f"  ❌ Arxiv Error: {e}")
+        return items
+
+    def search_social(self, topic, max_results=10):
+        items = []
+        platforms = ["site:reddit.com", "site:quora.com", "site:medium.com"]
+        print(f"  💬 Querying Social Channels...")
+        try:
+            with DDGS() as ddgs:
+                for platform in platforms:
+                    query = f"{platform} {topic}"
+                    results = ddgs.text(query, max_results=5)
+                    for r in results:
+                        # [FIX] Filter out Chinese content
+                        if not self._is_valid_content(r['title']) or not self._is_valid_content(r['body']):
+                            continue
+                            
+                        items.append({
+                            'url': r['href'],
+                            'title': r['title'],
+                            'source_type': 'social',
+                            'metadata': {'platform': platform.replace('site:', '')}
+                        })
+        except Exception as e:
+            print(f"  ❌ Social Error: {e}")
+        return items
+
+    def search_trusted_sources(self, topic, max_results=20):
+        """
+        Performs targeted searches against the Master List of Christian sources.
+        """
+        items = []
+        print(f"  ✝️ Querying Trusted Christian Sources...")
+        
+        try:
+            with DDGS() as ddgs:
+                # Iterate through categories in the master list
+                for category, domains in CHRISTIAN_SOURCES.items():
+                    if not domains: continue
+                    
+                    # We can't search ALL at once (URL length limits). 
+                    # Strategy: Create a combined query for the top 5-8 domains of each category.
+                    # This ensures we get high-quality hits from each sector (Official, News, Academic, etc.)
+                    
+                    chunk_size = 6
+                    for i in range(0, len(domains), chunk_size):
+                        chunk = domains[i:i+chunk_size]
+                        # Construct query: "topic (site:a.com OR site:b.com ...)"
+                        site_operators = " OR ".join([f"site:{d}" for d in chunk])
+                        query = f"{topic} ({site_operators})"
+                        
+                        try:
+                            # We only need a few results per chunk to verify coverage
+                            # Use 'wt-wt' (Global) instead of 'us-en' to ensure Indian/International sites are hit
+                            results = ddgs.text(query, region='wt-wt', max_results=3)
+                            for r in results:
+                                items.append({
+                                    'url': r['href'],
+                                    'title': r['title'],
+                                    'source_type': f'trusted_{category}',
+                                    'metadata': {'snippet': r['body'], 'category': category}
+                                })
+                        except Exception: 
+                            continue
+                            
+                    if len(items) >= max_results:
+                        break
+                        
+        except Exception as e:
+            print(f"  ❌ Trusted Source Error: {e}")
+            
+        print(f"    found {len(items)} trusted items.")
+        return items

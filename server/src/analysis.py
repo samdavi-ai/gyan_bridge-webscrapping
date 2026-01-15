@@ -116,3 +116,4 @@ class EventTrendAnalyzer:
             'stats': prediction_data['stats'],
             'context': full_context
         }
+             

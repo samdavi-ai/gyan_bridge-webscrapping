@@ -22,7 +22,7 @@ class LLMAnalytics:
             return self.llm_fallback.invoke(prompt)
         
     @retry_with_backoff(retries=0, initial_delay=1)
-    def analyze_and_graph(self, query, topic_context=None, context_docs=None, direct_context=None):
+    def analyze_and_graph(self, query, topic_context=None, context_docs=None, direct_context=None, lang='en'):
         """
         Generates a graph JSON based on the query and context.
         Strategy:
@@ -50,6 +50,10 @@ class LLMAnalytics:
             context_text = "\n\n".join([f"Source: {d['metadata'].get('source', 'Unknown')}\nContent: {d['content']}" for d in context_docs])
         
         # 2. Prompt LLM - Strict Schema Enforcement
+        lang_map = {'ta': 'Tamil', 'hi': 'Hindi', 'en': 'English', 'ml': 'Malayalam', 'te': 'Telugu'}
+        full_lang = lang_map.get(lang.lower(), lang).upper()
+        target_lang_instruction = f"IMPORTANT: Generate the 'insight' and all text labels in {full_lang} Language (Script)." if lang != 'en' else ""
+        
         prompt = f"""
         You are a Data Analyst AI. 
         User Query: {query}
@@ -60,6 +64,8 @@ class LLMAnalytics:
         
         Task: Analyze the context and answer the user's query by generating a JSON object for a graph.
         The output must be strictly valid JSON. Do not include markdown formatting like ```json.
+        
+        {target_lang_instruction}
         
         Rules:
         - Extract numeric trends vs time, or comparisons between categories.
@@ -72,14 +78,14 @@ class LLMAnalytics:
         REQUIRED JSON SCHEMA:
         {{
             "graph_type": "line" | "bar" | "pie",
-            "title": "Descriptive Graph Title",
+            "title": "Descriptive Graph Title (localized)",
             "xaxis_label": "Label for X",
             "yaxis_label": "Label for Y",
             "data": [
                 {{ "x": "2023", "y": 150 }},
                 {{ "x": "2024", "y": 200 }}
             ],
-            "insight": "Brief, data-backed insight explaining the trend. Mention if estimates are used."
+            "insight": "Brief, data-backed insight explaining the trend. Mention if estimates are used. (localized)"
         }}
         
         If absolutely no relevant information can be found, fallback to a general trend estimation based on the topic.

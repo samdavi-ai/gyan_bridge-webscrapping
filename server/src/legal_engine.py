@@ -92,7 +92,7 @@ class LegalAssistant:
         unique = {r['url']: r for r in results}.values()
         return list(unique)[:5]
 
-    def ask(self, query):
+    def ask(self, query, lang='en'):
         """
         Main entry point.
         Returns structured data with categories:
@@ -101,7 +101,7 @@ class LegalAssistant:
         - news: Related news articles
         - answer: LLM-generated summary
         """
-        print(f"⚖️ Legal Assistant: Analyzing '{query}'...")
+        print(f"⚖️ Legal Assistant: Analyzing '{query}' (Lang: {lang})...")
         
         # 1. Search for Acts and Statutes
         acts_hits = self._search_acts(query)
@@ -131,8 +131,14 @@ class LegalAssistant:
             context_str += f"Source {i}: {item['title']} ({item['url']})\nSnippet: {snippet[:300]}\n\n"
             
         # 5. LLM Synthesis
-        system_prompt = """You are an expert Indian Legal Assistant specializing in Constitutional Rights with a focus on Christian Minority contexts.
+        lang_map = {'ta': 'Tamil', 'hi': 'Hindi', 'en': 'English', 'ml': 'Malayalam', 'te': 'Telugu'}
+        full_lang = lang_map.get(lang.lower(), lang).upper()
+        target_lang_instruction = f"IMPORTANT: Respond in {full_lang} Language (Script)." if lang != 'en' else ""
+        
+        system_prompt = f"""You are an expert Indian Legal Assistant specializing in Constitutional Rights with a focus on Christian Minority contexts.
         Your goal is to provide a clear, actionable guide based strictly on the provided context.
+        
+        {target_lang_instruction}
         
         Structure your answer in Markdown:
         1. **Legal Basis**: Cite the specific Acts, Sections, or Articles found in the context (High Priority).

@@ -1,11 +1,168 @@
-const { useState, useEffect, useRef } = React;
+const { useState, useEffect, useRef, useCallback } = React;
 
 // --- Helper: Extract YouTube ID ---
+
+// --- i18n Dictionary ---
+const TRANSLATIONS = {
+    en: {
+        dashboard: "Dashboard",
+        wishlist: "Wishlist / Saved",
+        analytics: "Analytics",
+        legal: "Legal Assistant",
+        logout: "Logout",
+        search_placeholder: "Search sermons, news...",
+        trending_title: "Trending Gospel Videos",
+        trending_desc: "Curated trending video content from YouTube.",
+        news_title: "Christian News Feed",
+        news_desc: "Updates from the Global Church.",
+        videos_title: "Gospel Videos",
+        videos_desc: "Watch the latest sermons and worship sessions.",
+        admin_panel: "Admin Panel",
+        super_admin: "Super Admin",
+        live_updates: "Live Updates",
+        no_results: "No results found",
+        loading: "Loading...",
+        search: "Search",
+        clear: "Clear",
+        read_more: "Read More",
+        watch_now: "Watch Now",
+        saved: "Saved",
+        save: "Save",
+        // Dynamic Topics
+        Sports: "Sports",
+        Technology: "Technology",
+        Science: "Science",
+        Business: "Business",
+        Entertainment: "Entertainment",
+        Politics: "Politics",
+        Christianity: "Christianity"
+    },
+    hi: {
+        dashboard: "डैशबोर्ड",
+        wishlist: "सहेजे गए",
+        analytics: "विश्लेषण",
+        legal: "कानूनी सहायक",
+        logout: "लॉग आउट",
+        search_placeholder: "उपदेश, समाचार खोजें...",
+        trending_title: "ट्रेंडिंग गॉस्पेल वीडियो",
+        trending_desc: "YouTube से क्यूरेट सामग्री।",
+        news_title: "ईसाई समाचार फ़ीड",
+        news_desc: "वैश्विक चर्च से अपडेट।",
+        videos_title: "गॉस्पेल वीडियो",
+        videos_desc: "नवीनतम उपदेश और आराधना सत्र देखें।",
+        admin_panel: "व्यवस्थापक पैनल",
+        super_admin: "सुपर एडमिन",
+        live_updates: "लाइव अपडेट",
+        no_results: "कोई परिणाम नहीं मिला",
+        loading: "लोड हो रहा है...",
+        search: "खोजें",
+        clear: "साफ़ करें",
+        read_more: "और पढ़ें",
+        watch_now: "अभी देखें",
+        saved: "सहेजा गया",
+        save: "सहेजें",
+        // Dynamic Topics
+        Sports: "खेल",
+        Technology: "प्रौद्योगिकी",
+        Science: "विज्ञान",
+        Business: "व्यापार",
+        Entertainment: "मनोरंजन",
+        Politics: "राजनीति",
+        Christianity: "ईसाई धर्म"
+    },
+    ta: {
+        dashboard: "டாஷ்போர்டு",
+        wishlist: "விருப்பப்பட்டியல்",
+        analytics: "பகுப்பாய்வு",
+        legal: "சட்ட உதவியாளர்",
+        logout: "வெளியேறு",
+        search_placeholder: "செய்திகளைத் தேடுங்கள்...",
+        trending_title: "பிரபலமான வீடியோக்கள்",
+        trending_desc: "YouTube இல் இருந்து தேர்ந்தெடுக்கப்பட்ட வீடியோக்கள்.",
+        news_title: "கிறிஸ்தவ செய்திகள்",
+        news_desc: "உலகளாவிய சர்ச் செய்திகள்.",
+        videos_title: "நற்செய்தி வீடியோக்கள்",
+        videos_desc: "சமீபத்திய பிரசங்கங்கள் மற்றும் வழிபாடுகளைப் பாருங்கள்.",
+        admin_panel: "நிர்வாகக் குழு",
+        super_admin: "சூப்பர் நிர்வாகி",
+        live_updates: "நேரடி புதுப்பிப்புகள்",
+        no_results: "முடிவுகள் எதுவும் இல்லை",
+        loading: "ஏற்றுகிறது...",
+        search: "தேடு",
+        clear: "தெளிவாக்கு",
+        read_more: "மேலும் படிக்க",
+        watch_now: "இப்போது பார்க்கவும்",
+        saved: "சேமிக்கப்பட்டது",
+        save: "சேமி",
+        // Dynamic Topics
+        Sports: "விளையாட்டு",
+        Technology: "தொழில்நுட்பம்",
+        Science: "அறிவியல்",
+        Business: "வணிகம்",
+        Entertainment: "பொழுதுபோக்கு",
+        Politics: "அரசியல்",
+        Christianity: "கிறிஸ்தவம்"
+    }
+};
+
 const getYoutubeId = (url) => {
     if (!url) return null;
     const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|&v=)([^#&?]*).*/;
     const match = url.match(regExp);
     return (match && match[2].length === 11) ? match[2] : null;
+};
+
+// --- Search Suggestions Component ---
+const SearchSuggestions = ({ query, type, onSelect, onClose }) => {
+    const [suggestions, setSuggestions] = useState([]);
+    const wrapperRef = useRef(null);
+
+    useEffect(() => {
+        // Debounce Fetch
+        if (!query || query.length < 2) {
+            setSuggestions([]);
+            return;
+        }
+
+        const timer = setTimeout(() => {
+            fetch(`/api/suggestions?q=${encodeURIComponent(query)}&type=${type}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (Array.isArray(data)) setSuggestions(data);
+                })
+                .catch(err => console.error(err));
+        }, 300);
+
+        return () => clearTimeout(timer);
+    }, [query, type]);
+
+    // Click Outside listener
+    useEffect(() => {
+        const handleClickOutside = (event) => {
+            if (wrapperRef.current && !wrapperRef.current.contains(event.target)) {
+                onClose();
+            }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+    }, [onClose]);
+
+    if (!suggestions.length) return null;
+
+    return (
+        <div ref={wrapperRef} className="absolute top-full left-0 right-0 bg-[#0a0a12] border border-white/10 rounded-xl mt-2 z-50 shadow-2xl overflow-hidden animate-fade-in">
+            {suggestions.map((s, i) => (
+                <div
+                    key={i}
+                    className="px-4 py-3 hover:bg-white/5 cursor-pointer flex items-center gap-3 text-gray-300 hover:text-white transition-colors border-b border-white/5 last:border-0"
+                    onClick={() => { onSelect(s); onClose(); }}
+                >
+                    <i className="ri-search-line text-xs text-gray-500"></i>
+                    <span dangerouslySetInnerHTML={{ __html: s.replace(new RegExp(`(${query})`, 'gi'), '<span class="text-white font-semibold">$1</span>') }}></span>
+                </div>
+            ))}
+        </div>
+    );
 };
 
 // --- Mock Data: Christian News (Expanded) ---
@@ -429,13 +586,13 @@ const VideoModal = ({ video, onClose }) => {
 
 // --- Component: Legal Assistant Modal ---
 // --- Component: Legal Assistant Modal ---
-const LegalAssistantModal = ({ onClose }) => {
-    const [query, setQuery] = useState("");
-    const [messages, setMessages] = useState([
-        { role: 'assistant', content: "👋 **Hello!** I am your **Christian Legal Assistant**.\n\nI can help you with:\n- 📜 **Indian Constitutional Acts**\n- ⛪ **Church Registration (Trust/Society)**\n- 🛡️ **Minority Rights & Protection**\n\n*Ask me anything to get started!*" }
-    ]);
+// --- Component: Legal Assistant Modal ---
+const LegalAssistantModal = ({ onClose, lang }) => {
+    const [messages, setMessages] = useState([{ role: 'assistant', content: "Hello! I am your Legal Assistant. I can help you find Acts, Procedures, and relevant Case Laws. Ask me anything!" }]);
+    const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef(null);
+    const [isSpeaking, setIsSpeaking] = useState(false);
 
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -445,36 +602,76 @@ const LegalAssistantModal = ({ onClose }) => {
         scrollToBottom();
     }, [messages]);
 
-    const handleSend = async () => {
-        if (!query.trim()) return;
+    const speakText = (text) => {
+        if (!window.speechSynthesis) return;
+        if (isSpeaking) {
+            window.speechSynthesis.cancel();
+            setIsSpeaking(false);
+            return;
+        }
 
-        const userMsg = { role: 'user', content: query };
-        setMessages(prev => [...prev, userMsg]);
-        setQuery("");
+        // Clean text (remove markdown symbols for better speech)
+        const cleanText = text.replace(/[*#_`]/g, '');
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.lang = 'en-IN'; // Indian accent preference
+        utterance.rate = 1.0;
+
+        utterance.onend = () => setIsSpeaking(false);
+        setIsSpeaking(true);
+        window.speechSynthesis.speak(utterance);
+    };
+
+    const handleVoiceSearch = () => {
+        if (!('webkitSpeechRecognition' in window)) {
+            alert("Voice search is not supported in this browser.");
+            return;
+        }
+        const recognition = new window.webkitSpeechRecognition();
+        recognition.lang = 'en-IN';
+        recognition.onstart = () => console.log("Legal Voice Listening...");
+        recognition.onresult = (event) => {
+            const transcript = event.results[0][0].transcript;
+            setQuery(transcript);
+            handleSend(transcript); // Auto-send
+        };
+        recognition.start();
+    };
+
+    const handleSend = async (manualQuery = null) => {
+        const q = manualQuery || query;
+        if (!q.trim()) return;
+
+        // User Message
+        const newMessages = [...messages, { role: 'user', content: q }];
+        setMessages(newMessages);
+        setQuery('');
         setLoading(true);
+        window.speechSynthesis.cancel(); // Stop any previous speech
 
         try {
             const res = await fetch('/api/legal/ask', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query: userMsg.content })
+                body: JSON.stringify({ query: q, lang: lang || 'en' })
             });
             const data = await res.json();
 
-            if (data.error) {
-                setMessages(prev => [...prev, { role: 'assistant', content: "Error: " + data.error, error: true }]);
-            } else {
-                setMessages(prev => [...prev, {
-                    role: 'assistant',
-                    content: data.answer,
-                    acts: data.acts || [],
-                    procedures: data.procedures || [],
-                    news: data.news || [],
-                    sources: data.sources || []
-                }]);
-            }
+            // Assistant Answer
+            const botMsg = {
+                role: 'assistant',
+                content: data.answer,
+                acts: data.acts,
+                procedures: data.procedures,
+                news: data.news
+            };
+            setMessages([...newMessages, botMsg]);
+
+            // Auto-speak the answer on arrival (Optional, maybe annoying? Let's add a button instead)
+            // speakText(data.answer); 
+
         } catch (err) {
-            setMessages(prev => [...prev, { role: 'assistant', content: "Network error. Please try again.", error: true }]);
+            console.error(err);
+            setMessages([...newMessages, { role: 'assistant', content: "Sorry, I encountered an error researching that legal topic." }]);
         } finally {
             setLoading(false);
         }
@@ -523,6 +720,15 @@ const LegalAssistantModal = ({ onClose }) => {
                                             <div className="prose prose-invert prose-lg max-w-none leading-relaxed text-gray-200"
                                                 dangerouslySetInnerHTML={{ __html: window.marked ? window.marked.parse(msg.content) : msg.content }}>
                                             </div>
+
+                                            {/* Speak Button */}
+                                            <button
+                                                onClick={() => speakText(msg.content)}
+                                                className={`mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all ${isSpeaking ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
+                                            >
+                                                <i className={`ri-${isSpeaking ? 'stop-circle-line' : 'volume-up-line'} text-lg`}></i>
+                                                {isSpeaking ? 'Stop Reading' : 'Read Aloud'}
+                                            </button>
 
                                             {/* Section: Acts */}
                                             {msg.acts && msg.acts.length > 0 && (
@@ -622,20 +828,29 @@ const LegalAssistantModal = ({ onClose }) => {
                         <div className="relative flex items-center bg-[#18181b] rounded-2xl border border-white/10 focus-within:border-indigo-500/50 shadow-2xl transition-all">
                             <input
                                 type="text"
-                                className="w-full bg-transparent border-none rounded-2xl py-5 pl-6 pr-16 text-white text-lg placeholder-gray-500 focus:ring-0"
+                                className="w-full bg-transparent border-none rounded-2xl py-5 pl-6 pr-24 text-white text-lg placeholder-gray-500 focus:ring-0"
                                 placeholder="Ask about church bylaws, property disputes, or FCRA regulations..."
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}
                                 autoFocus
                             />
-                            <button
-                                onClick={handleSend}
-                                disabled={loading || !query.trim()}
-                                className="absolute right-3 p-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-xl transition-all transform active:scale-95 shadow-lg shadow-indigo-900/20"
-                            >
-                                <i className="ri-send-plane-2-fill text-xl"></i>
-                            </button>
+                            <div className="absolute right-3 flex items-center gap-2">
+                                <button
+                                    onClick={handleVoiceSearch}
+                                    className="p-3 text-gray-400 hover:text-white rounded-xl transition-colors hover:bg-white/5"
+                                    title="Voice Input"
+                                >
+                                    <i className="ri-mic-fill text-xl"></i>
+                                </button>
+                                <button
+                                    onClick={() => handleSend()}
+                                    disabled={loading || !query.trim()}
+                                    className="p-3 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700 disabled:text-gray-500 text-white rounded-xl transition-all transform active:scale-95 shadow-lg shadow-indigo-900/20"
+                                >
+                                    <i className="ri-send-plane-2-fill text-xl"></i>
+                                </button>
+                            </div>
                         </div>
                     </div>
                     <p className="text-center text-xs text-gray-600 mt-4">
@@ -650,7 +865,7 @@ const LegalAssistantModal = ({ onClose }) => {
 
 // --- Component: News Card ---
 // --- Component: News Card ---
-const PLACEHOLDER_IMG = "https://images.unsplash.com/photo-1490730141103-6cac27aaab94?auto=format&fit=crop&q=80&w=800"; // Reliable fallback
+const PLACEHOLDER_IMG = "https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=800"; // Abstract Dark Gradient
 
 const NewsCard = ({ article, onRead, isSaved, onToggleSave }) => {
     const videoId = getYoutubeId(article.url);
@@ -739,10 +954,32 @@ const VideoCard = ({ video, isSaved, onToggleSave, onWatch }) => {
     };
     const badge = getBadge(video.source_type);
 
+    // Generate fallback thumbnail URLs
+    const videoId = video.id;
+    const fallbackThumbnails = videoId ? [
+        `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+        `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+        PLACEHOLDER_IMG
+    ] : [PLACEHOLDER_IMG];
+
+    const handleImageError = (e) => {
+        const currentSrc = e.target.src;
+        const fallbackIndex = fallbackThumbnails.findIndex(url => url === currentSrc);
+        const nextFallback = fallbackThumbnails[fallbackIndex + 1] || PLACEHOLDER_IMG;
+        if (currentSrc !== nextFallback) {
+            e.target.src = nextFallback;
+        }
+    };
+
     return (
         <div className="bg-[#1E1E1E] rounded-xl overflow-hidden hover:bg-[#252525] transition-all border border-white/5 hover:border-cyan-500/30 group relative">
             <div className="relative aspect-video bg-black/50 cursor-pointer" onClick={() => onWatch(video)}>
-                <img src={video.image} className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity" />
+                <img
+                    src={video.image || video.thumbnail || (videoId ? `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg` : PLACEHOLDER_IMG)}
+                    className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity"
+                    onError={handleImageError}
+                    alt={video.title}
+                />
                 <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-transparent transition-colors">
                     <div className="w-12 h-12 bg-white/10 backdrop-blur rounded-full flex items-center justify-center border border-white/30 group-hover:scale-110 transition-transform shadow-xl">
                         <i className="ri-play-fill text-2xl text-white"></i>
@@ -770,47 +1007,71 @@ const VideoCard = ({ video, isSaved, onToggleSave, onWatch }) => {
 };
 
 // --- Component: Sidebar ---
-// Now receiving collapsed state as props
-const Sidebar = ({ activeTab, onNavigate, onLogout, collapsed, setCollapsed }) => {
-    // REMOVED internal useState for collapsed
-    const items = [
-        { id: 'dashboard', label: 'Dashboard', icon: 'ri-dashboard-line' },
-        { id: 'saved', label: 'Wishlist / Saved', icon: 'ri-heart-fill' },
-        { id: 'analytics', label: 'Analytics', icon: 'ri-bar-chart-groupped-line' },
-        // { id: 'admin', label: 'Admin Panel', icon: 'ri-admin-line' }, // [MOVED] to Header
-
-        { id: 'legal', label: 'Legal Assistant', icon: 'ri-scales-3-line' }, // [RESTORED]
+const Sidebar = ({ activeTab, onNavigate, onLogout, collapsed, setCollapsed, lang, setLang }) => {
+    const menuItems = [
+        { id: 'dashboard', icon: 'ri-dashboard-line', label: TRANSLATIONS[lang].dashboard },
+        { id: 'saved', icon: 'ri-heart-3-line', label: TRANSLATIONS[lang].wishlist },
+        { id: 'analytics', icon: 'ri-bar-chart-grouped-line', label: TRANSLATIONS[lang].analytics },
+        { id: 'legal', icon: 'ri-scales-3-line', label: TRANSLATIONS[lang].legal },
     ];
 
     return (
-        <aside className={`${collapsed ? 'w-16' : 'w-64'} bg-[#15151A] border-r border-white/5 flex flex-col transition-all duration-300 h-screen fixed left-0 top-0 z-50 hidden md:flex`}>
-            <div className="p-4 flex items-center justify-between border-b border-white/5 h-[70px] shrink-0">
+        <aside className={`${collapsed ? 'w-16' : 'w-64'} h-screen bg-[#0a0a0c]/90 backdrop-blur border-r border-white/5 flex flex-col transition-all duration-300 fixed md:relative z-50`}>
+            {/* Logo Section */}
+            <div className={`p-6 flex items-center ${collapsed ? 'justify-center' : 'justify-between'}`}>
                 {!collapsed && (
-                    <div className="flex items-center gap-2">
-                        <img src="/static/logo.png" alt="Logo" className="w-8 h-8 rounded-full" />
-                        <h2 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-cyan-400 truncate">GyanBridge</h2>
+                    <div className="flex items-center gap-2 animate-fade-in">
+                        <img src="/static/logo.png" alt="Logo" className="w-8 h-8" />
+                        <span className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-purple-400 to-cyan-400">GyanBridge</span>
                     </div>
                 )}
-                {collapsed && <img src="/static/logo.png" alt="Logo" className="w-8 h-8 rounded-full mx-auto" />}
-                <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white"><i className={collapsed ? 'ri-menu-unfold-line' : 'ri-menu-fold-line'}></i></button>
+                <button onClick={() => setCollapsed(!collapsed)} className="text-gray-400 hover:text-white transition-colors">
+                    <i className={`ri-${collapsed ? 'menu-unfold' : 'menu-fold'}-line text-xl`}></i>
+                </button>
             </div>
-            <nav className="flex-1 py-6 space-y-2 px-2 overflow-y-auto">
-                {items.map(item => (
+
+            {/* Navigation */}
+            <nav className="flex-1 py-6 space-y-2 px-3">
+                {menuItems.map(item => (
                     <button
                         key={item.id}
                         onClick={() => onNavigate(item.id)}
-                        className={`w-full flex items-center ${collapsed ? 'justify-center' : 'px-4'} py-3 rounded-lg transition-all ${activeTab === item.id ? 'bg-purple-600/20 text-purple-300 border border-purple-500/30' : 'text-gray-400 hover:bg-white/5 hover:text-white'}`}
+                        className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-200 group relative ${activeTab === item.id
+                            ? 'bg-gradient-to-r from-purple-600/20 to-cyan-600/20 text-white border border-white/5'
+                            : 'text-gray-400 hover:bg-white/5 hover:text-white'
+                            } ${collapsed ? 'justify-center' : ''}`}
                         title={collapsed ? item.label : ''}
                     >
-                        <i className={`${item.icon} text-lg`}></i>
-                        {!collapsed && <span className="ml-3 font-medium">{item.label}</span>}
+                        <i className={`${item.icon} text-xl ${activeTab === item.id ? 'text-purple-400' : 'group-hover:text-purple-400'} transition-colors`}></i>
+                        {!collapsed && <span className="font-medium text-sm">{item.label}</span>}
+                        {activeTab === item.id && !collapsed && <div className="absolute right-3 w-1.5 h-1.5 rounded-full bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.5)]"></div>}
                     </button>
                 ))}
             </nav>
-            <div className="p-4 border-t border-white/5 shrink-0">
-                <button onClick={onLogout} className={`w-full flex items-center ${collapsed ? 'justify-center' : 'px-4'} py-2 text-red-400 hover:bg-red-500/10 rounded-lg transition`}>
-                    <i className="ri-logout-box-line"></i>
-                    {!collapsed && <span className="ml-3">Logout</span>}
+
+            {/* Language Selector */}
+            {!collapsed && (
+                <div className="px-6 pb-4">
+                    <p className="text-xs text-gray-500 mb-2 uppercase tracking-wider font-bold">Language</p>
+                    <div className="flex bg-black/40 rounded-lg p-1 border border-white/10">
+                        {Object.keys(TRANSLATIONS).map((l) => (
+                            <button
+                                key={l}
+                                onClick={() => setLang(l)}
+                                className={`flex-1 text-xs py-1.5 rounded transition-all ${lang === l ? 'bg-purple-600 text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
+                            >
+                                {l.toUpperCase()}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
+
+            {/* Logout */}
+            <div className="p-4 border-t border-white/5">
+                <button onClick={onLogout} className={`w-full flex items-center gap-3 px-3 py-3 text-red-400 hover:bg-red-500/10 hover:text-red-300 rounded-xl transition-all ${collapsed ? 'justify-center' : ''}`}>
+                    <i className="ri-logout-box-r-line text-xl"></i>
+                    {!collapsed && <span className="font-medium text-sm">{TRANSLATIONS[lang].logout}</span>}
                 </button>
             </div>
         </aside>
@@ -820,6 +1081,7 @@ const Sidebar = ({ activeTab, onNavigate, onLogout, collapsed, setCollapsed }) =
 // --- Component: Admin Dashboard ---
 const AdminDashboard = () => {
     const [token, setToken] = useState(localStorage.getItem('admin_token'));
+    const [adminUsername, setAdminUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [content, setContent] = useState({ videos: [], news: [] });
@@ -835,14 +1097,14 @@ const AdminDashboard = () => {
         fetch('/api/admin/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password })
+            body: JSON.stringify({ username: adminUsername, password })
         }).then(res => res.json()).then(data => {
             if (data.success) {
                 localStorage.setItem('admin_token', data.token);
                 setToken(data.token);
                 setError('');
             } else {
-                setError('Invalid Password');
+                setError(data.error || 'Invalid credentials');
             }
         });
     };
@@ -890,7 +1152,8 @@ const AdminDashboard = () => {
                     </div>
                     {error && <div className="text-red-400 text-xs text-center bg-red-500/10 py-2 rounded border border-red-500/20"><i className="ri-error-warning-line mr-1"></i>{error}</div>}
                     <div className="space-y-4">
-                        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Enter Admin Password" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-purple-500 outline-none transition-all placeholder:text-gray-600" autoFocus />
+                        <input type="text" value={adminUsername} onChange={e => setAdminUsername(e.target.value)} placeholder="Username" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-purple-500 outline-none transition-all placeholder:text-gray-600" autoFocus />
+                        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-purple-500 outline-none transition-all placeholder:text-gray-600" />
                         <button type="submit" className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold py-3 rounded-lg transition shadow-lg shadow-purple-900/20">Unlock Dashboard</button>
                     </div>
                 </form>
@@ -978,71 +1241,224 @@ const AdminDashboard = () => {
     );
 };
 
+// --- Component: Super Admin Dashboard (Topic Control) ---
+const SuperAdminDashboard = () => {
+    const [token, setToken] = useState(localStorage.getItem('super_token'));
+    const [username, setUsername] = useState('');
+    const [password, setPassword] = useState('');
+    const [topics, setTopics] = useState({});
+    const [error, setError] = useState('');
+    const [loading, setLoading] = useState(false);
+
+    useEffect(() => {
+        if (token) fetchTopics();
+    }, [token]);
+
+    const handleLogin = (e) => {
+        e.preventDefault();
+        fetch('/api/superadmin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                localStorage.setItem('super_token', data.token);
+                setToken(data.token);
+                setError('');
+            } else {
+                setError(data.error);
+            }
+        });
+    };
+
+    const fetchTopics = () => {
+        setLoading(true);
+        fetch('/api/superadmin/topics')
+            .then(res => res.json())
+            .then(data => {
+                setTopics(data);
+                setLoading(false);
+            });
+    };
+
+    const toggleTopic = (topic, currentStatus) => {
+        // Optimistic UI update
+        setTopics(prev => ({ ...prev, [topic]: !currentStatus }));
+
+        fetch('/api/superadmin/topics', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic, status: !currentStatus })
+        });
+    };
+
+    if (!token) {
+        return (
+            <div className="flex items-center justify-center h-full animate-fade-in p-6 bg-[#0a0a0c]">
+                <form onSubmit={handleLogin} className="bg-[#15151A] p-8 rounded-2xl border border-white/10 w-full max-w-md space-y-6 shadow-2xl relative overflow-hidden">
+                    <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-500 to-red-600"></div>
+                    <div className="text-center">
+                        <div className="w-16 h-16 bg-orange-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-orange-500/30">
+                            <i className="ri-shield-keyhole-fill text-2xl text-orange-400"></i>
+                        </div>
+                        <h2 className="2xl font-bold text-white">Super Admin</h2>
+                        <p className="text-gray-400 text-sm mt-1">Manage platform content topics.</p>
+                    </div>
+                    {error && <div className="text-red-400 text-xs text-center bg-red-500/10 py-2 rounded border border-red-500/20"><i className="ri-error-warning-line mr-1"></i>{error}</div>}
+                    <div className="space-y-4">
+                        <input type="text" value={username} onChange={e => setUsername(e.target.value)} placeholder="Username" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange-500 outline-none transition-all placeholder:text-gray-600" />
+                        <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" className="w-full bg-black/40 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-orange-500 outline-none transition-all placeholder:text-gray-600" />
+                        <button type="submit" className="w-full bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-500 hover:to-red-500 text-white font-bold py-3 rounded-lg transition shadow-lg shadow-orange-900/20">Access Control</button>
+                    </div>
+                </form>
+            </div>
+        );
+    }
+
+    return (
+        <div className="p-8 h-full overflow-y-auto animate-fade-in">
+            <div className="flex items-center justify-between mb-8">
+                <div>
+                    <h1 className="text-3xl font-bold text-white">Topic Control</h1>
+                    <p className="text-gray-400">Enable or disable content categories across the platform.</p>
+                </div>
+                <button onClick={() => { setToken(null); localStorage.removeItem('super_token'); }} className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-gray-300 transition-colors">
+                    Logout
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {Object.entries(topics).map(([topic, active]) => (
+                    <div key={topic} className={`p-6 rounded-xl border transition-all ${active ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-xl font-bold text-white">{topic}</h3>
+                            <button
+                                onClick={() => toggleTopic(topic, active)}
+                                className={`w-12 h-6 rounded-full p-1 transition-colors ${active ? 'bg-green-500' : 'bg-gray-600'}`}
+                            >
+                                <div className={`w-4 h-4 rounded-full bg-white shadow transition-transform ${active ? 'translate-x-6' : 'translate-x-0'}`} />
+                            </button>
+                        </div>
+                        <p className={`text-sm ${active ? 'text-green-400' : 'text-red-400'}`}>
+                            {active ? 'Active on Platform' : 'Disabled (Hidden)'}
+                        </p>
+                    </div>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 // --- Component: Dashboard Layout ---
 const DashboardLayout = ({ user, onLogout }) => {
     const [activeTab, setActiveTab] = useState('dashboard');
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    const [lang, setLang] = useState('en');
+    const [activeTopics, setActiveTopics] = useState([]);
+
+    // Fetch Active Topics
+    useEffect(() => {
+        fetch('/api/topics/active').then(r => r.json()).then(d => setActiveTopics(d.topics || []));
+    }, []);
+
+    // Helper for Dynamic Titles
+    const getDynamicTitle = (baseTitle, type) => {
+        if (!activeTopics || activeTopics.length === 0 || activeTopics.includes("Christianity") || activeTopics.includes("Christian")) return baseTitle;
+        const rawTopic = activeTopics[0]; // Simple logic: take primary non-christian topic
+        const topic = t(rawTopic) || rawTopic; // Translate
+
+        if (type === 'news') {
+            // Basic localized construction (Naive but works for Hi/Ta)
+            if (lang === 'hi') return `${topic} समाचार फ़ीड`; // Topic News Feed
+            if (lang === 'ta') return `${topic} செய்திகள்`;   // Topic News
+            return `${topic} News Feed`;
+        }
+        if (type === 'video') {
+            if (lang === 'hi') return `ट्रेंडिंग ${topic} वीडियो`;
+            if (lang === 'ta') return `பிரபலமான ${topic} வீடியோக்கள்`;
+            return `Trending ${topic} Videos`;
+        }
+        return baseTitle;
+    };
+
+    // Helper for Translation
+    const t = (key) => TRANSLATIONS[lang][key] || key;
+
+    // Search State
     const [query, setQuery] = useState("");
     const [savedItems, setSavedItems] = useState([]);
     const [liveNews, setLiveNews] = useState(null); // Start null to show loader
     const [liveVideos, setLiveVideos] = useState(null); // Start null to show loader
     const [loading, setLoading] = useState(false);
-    const [searchResults, setSearchResults] = useState(null);
-    const [analyticsReport, setAnalyticsReport] = useState(null); // [NEW] Store dynamic report
+    const [searchResults, setSearchResults] = useState(null); // Combined results for dashboard
+    const [analyticsReport, setAnalyticsReport] = useState(null);
     const [analyticsLoading, setAnalyticsLoading] = useState(false);
+    const [isRefreshing, setIsRefreshing] = useState(false);
 
-    // State for Sidebar Layout Dynamic Resizing
-    const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+    // Separate search states for News and Videos tabs
+    const [newsQuery, setNewsQuery] = useState("");
+    const [videoQuery, setVideoQuery] = useState("");
+    const [newsSearchResults, setNewsSearchResults] = useState(null);
+    const [videoSearchResults, setVideoSearchResults] = useState(null);
+    const [newsSearching, setNewsSearching] = useState(false);
+    const [videoSearching, setVideoSearching] = useState(false);
 
     // Modal States
     const [readerUrl, setReaderUrl] = useState(null);
     const [activeVideo, setActiveVideo] = useState(null);
-    const [legalOpen, setLegalOpen] = useState(false); // [RESTORED]
+    const [legalOpen, setLegalOpen] = useState(false);
+
+    // Suggestions Visibility State
+    const [showMainSuggestions, setShowMainSuggestions] = useState(false);
+    const [showNewsSuggestions, setShowNewsSuggestions] = useState(false);
+    const [showVideoSuggestions, setShowVideoSuggestions] = useState(false);
+
+    // Fetch News Function (useCallback for reuse)
+    const fetchNews = useCallback(() => {
+        fetch(`/api/news?lang=${lang}`).then(res => res.json()).then(data => {
+            if (Array.isArray(data)) {
+                const cleanData = data.map((item, idx) => ({ ...item, id: item.id || `news_${idx}` }));
+                setLiveNews(prev => {
+                    // Force update if language changed (simple logic: just update)
+                    return cleanData;
+                });
+            } else {
+                setLiveNews([]);
+            }
+        }).catch(err => {
+            console.error("News fetch error:", err);
+            setLiveNews([]);
+        });
+    }, [lang]);
+
+    // Fetch Videos Function (useCallback for reuse)
+    const fetchVideos = useCallback(() => {
+        fetch(`/api/videos?lang=${lang}`).then(res => res.json()).then(data => {
+            if (Array.isArray(data)) {
+                const cleanVideos = data.map((item, idx) => ({ ...item, id: item.id || `vid_${idx}` }));
+                setLiveVideos(prev => {
+                    return cleanVideos;
+                });
+            } else {
+                setLiveVideos([]);
+            }
+        }).catch(err => {
+            console.error("Videos fetch error:", err);
+            setLiveVideos([]);
+        });
+    }, [lang]);
+
+    // Manual Refresh Handler
+    const handleRefresh = useCallback(async () => {
+        setIsRefreshing(true);
+        await Promise.all([fetchNews(), fetchVideos()]);
+        setTimeout(() => setIsRefreshing(false), 500); // Brief delay for visual feedback
+    }, [fetchNews, fetchVideos]);
 
     // Initial Load - Enforce Unique IDs + Auto-Refresh
     useEffect(() => {
         const saved = localStorage.getItem('gb_wishlist');
         if (saved) setSavedItems(JSON.parse(saved));
-
-        // Fetch News Function
-        const fetchNews = () => {
-            fetch('/api/news').then(res => res.json()).then(data => {
-                if (Array.isArray(data)) {
-                    // Backend now provides stable IDs and proper 'url' field.
-                    const cleanData = data.map((item, idx) => ({ ...item, id: item.id || `news_${idx}` }));
-
-                    // [FIX] Prevent re-render (blinking) if data hasn't changed
-                    setLiveNews(prev => {
-                        if (JSON.stringify(prev) === JSON.stringify(cleanData)) return prev;
-                        return cleanData;
-                    });
-                } else {
-                    setLiveNews(prev => (prev && prev.length === 0) ? prev : []);
-                }
-            }).catch(err => {
-                console.error("News fetch error:", err);
-                if (liveNews === null) setLiveNews([]);
-            });
-        };
-
-        // Fetch Videos Function
-        const fetchVideos = () => {
-            fetch('/api/videos').then(res => res.json()).then(data => {
-                if (Array.isArray(data)) {
-                    const cleanVideos = data.map((item, idx) => ({ ...item, id: item.id || `vid_${idx}` }));
-
-                    // [FIX] Prevent re-render if data hasn't changed
-                    setLiveVideos(prev => {
-                        if (JSON.stringify(prev) === JSON.stringify(cleanVideos)) return prev;
-                        return cleanVideos;
-                    });
-                } else {
-                    setLiveVideos(prev => (prev && prev.length === 0) ? prev : []);
-                }
-            }).catch(err => {
-                console.error("Videos fetch error:", err);
-                if (liveVideos === null) setLiveVideos([]);
-            });
-        };
 
         // Initial fetch
         fetchNews();
@@ -1057,7 +1473,7 @@ const DashboardLayout = ({ user, onLogout }) => {
             clearInterval(newsInterval);
             clearInterval(videosInterval);
         };
-    }, []);
+    }, [fetchNews, fetchVideos]);
 
     const toggleSave = (item) => {
         let newItems;
@@ -1103,6 +1519,7 @@ const DashboardLayout = ({ user, onLogout }) => {
         recognition.start();
     };
 
+    // Main Search - Fetches BOTH News and Videos for unified results
     const handleSearch = async (e, manualQuery = null) => {
         if (e) e.preventDefault();
         const q = manualQuery || query;
@@ -1110,43 +1527,65 @@ const DashboardLayout = ({ user, onLogout }) => {
 
         setLoading(true);
         setAnalyticsLoading(true);
-        // Only switch to dashboard if we are NOT on analytics tab
-        // If user is on analytics, they likely want to see the report there
-        if (activeTab !== 'analytics') {
-            setActiveTab('dashboard');
-        }
+        setActiveTab('dashboard');
         setSearchResults(null);
         setAnalyticsReport(null);
 
         try {
-            // Determine search type based on activeTab
-            let searchType = 'web';
-            if (activeTab === 'news') searchType = 'news';
-            if (activeTab === 'videos') searchType = 'video';
+            // Fetch News and Videos concurrently
+            const [newsRes, videoRes] = await Promise.all([
+                fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic: q, limit: 20, type: 'news', lang })
+                }),
+                fetch('/api/search', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topic: q, limit: 20, type: 'video', lang })
+                })
+            ]);
 
-            // 1. Fetch Search Results
-            const res = await fetch('/api/search', {
+            const newsData = await newsRes.json();
+            const videoData = await videoRes.json();
+
+            // Combine and tag results
+            const newsResults = (newsData.results || []).map((item, idx) => ({
+                ...item,
+                id: item.id || `news_${Date.now()}_${idx}`,
+                result_type: 'news'
+            }));
+            const videoResults = (videoData.results || []).map((item, idx) => ({
+                ...item,
+                id: item.id || `video_${Date.now()}_${idx}`,
+                result_type: 'video',
+                source_type: 'youtube'
+            }));
+
+            // Interleave results for mixed display
+            const combined = [];
+            const maxLen = Math.max(newsResults.length, videoResults.length);
+            for (let i = 0; i < maxLen; i++) {
+                if (videoResults[i]) combined.push(videoResults[i]);
+                if (newsResults[i]) combined.push(newsResults[i]);
+            }
+
+            setSearchResults(combined);
+
+            // Fetch Analytics Report
+            fetch('/api/analytics/query', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ topic: q, limit: 30, type: searchType })
-            });
-            const data = await res.json();
-
-            // Enforce Unique IDs on Search Results
-            const results = (data.results || []).map((item, idx) => ({ ...item, id: item.id || `search_${Date.now()}_${idx}` }));
-            setSearchResults(results);
-
-            // 2. Fetch Analytics Report
-            fetch('/api/analytics/query', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) })
+                body: JSON.stringify({ query: q, lang })
+            })
                 .then(res => res.json())
                 .then(data => {
                     if (!data.error) {
                         setAnalyticsReport(data);
                     } else {
-                        // Handle backend error gracefully
                         setAnalyticsReport({
                             title: "Analysis Failed",
-                            insight: "We couldn't generate a report for this topic. It might be too obscure or protected. Error: " + data.error,
+                            insight: "We couldn't generate a report for this topic. Error: " + data.error,
                             data: [],
                             error: true
                         });
@@ -1155,17 +1594,82 @@ const DashboardLayout = ({ user, onLogout }) => {
                 })
                 .catch(err => {
                     console.error("Analytics fetch failed", err);
-                    setAnalyticsReport({
-                        title: "Network Error",
-                        insight: "Failed to reach the analytics engine. Please check your connection.",
-                        data: [],
-                        error: true
-                    });
                     setAnalyticsLoading(false);
                 });
 
         } catch (err) { console.error(err); }
         finally { setLoading(false); }
+    };
+
+    // News-specific search
+    const handleNewsSearch = async (e, manualQuery = null) => {
+        if (e) e.preventDefault();
+        const q = manualQuery || newsQuery;
+        if (!q.trim()) {
+            setNewsSearchResults(null);
+            return;
+        }
+
+        setNewsSearching(true);
+        try {
+            const res = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ topic: q, limit: 30, type: 'news', lang })
+            });
+            const data = await res.json();
+            const results = (data.results || []).map((item, idx) => ({
+                ...item,
+                id: item.id || `news_search_${Date.now()}_${idx}`
+            }));
+            setNewsSearchResults(results);
+        } catch (err) {
+            console.error(err);
+            setNewsSearchResults([]);
+        }
+        finally { setNewsSearching(false); }
+    };
+
+    // Video-specific search
+    const handleVideoSearch = async (e, manualQuery = null) => {
+        if (e) e.preventDefault();
+        const q = manualQuery || videoQuery;
+        if (!q.trim()) {
+            setVideoSearchResults(null);
+            return;
+        }
+
+        setVideoSearching(true);
+        try {
+            const res = await fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ topic: q, limit: 30, type: 'video', lang })
+            });
+            const data = await res.json();
+            const results = (data.results || []).map((item, idx) => ({
+                ...item,
+                id: item.id || `video_search_${Date.now()}_${idx}`,
+                source_type: 'youtube'
+            }));
+            setVideoSearchResults(results);
+        } catch (err) {
+            console.error(err);
+            setVideoSearchResults([]);
+        }
+        finally { setVideoSearching(false); }
+    };
+
+    // Clear news search
+    const clearNewsSearch = () => {
+        setNewsQuery("");
+        setNewsSearchResults(null);
+    };
+
+    // Clear video search
+    const clearVideoSearch = () => {
+        setVideoQuery("");
+        setVideoSearchResults(null);
     };
     return (
         <div className="bg-[#0a0a12] text-white font-['Rajdhani'] h-screen flex flex-col md:flex-row overflow-hidden">
@@ -1175,10 +1679,12 @@ const DashboardLayout = ({ user, onLogout }) => {
                 onLogout={onLogout}
                 collapsed={sidebarCollapsed}
                 setCollapsed={setSidebarCollapsed}
+                lang={lang}
+                setLang={setLang}
             />
 
-            {/* Main Content Wrapper - Dynamic Margin based on Sidebar State */}
-            <div className={`flex-1 flex flex-col h-full relative transition-all duration-300 ${sidebarCollapsed ? 'md:ml-16' : 'md:ml-64'}`}>
+            {/* Main Content Wrapper - No margin needed as Sidebar is relative on desktop */}
+            <div className={`flex-1 flex flex-col h-full relative transition-all duration-300`}>
                 <header className="shrink-0 bg-[#0a0a12]/95 backdrop-blur border-b border-white/5 h-[70px] flex items-center justify-between px-6 z-40">
                     <div className="flex items-center gap-4 w-full max-w-xl">
                         <div className="flex items-center mr-4 shrink-0">
@@ -1189,19 +1695,33 @@ const DashboardLayout = ({ user, onLogout }) => {
                                 <span className="text-2xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-cyan-400">GyanBridge</span>
                             </div>
                         </div>
-                        <form onSubmit={handleSearch} className="flex-1 relative">
-                            <i className="ri-search-line absolute left-3 top-2.5 text-gray-500"></i>
-                            <input type="text" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search sermons, news..." className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-10 pr-12 text-sm focus:border-purple-500 outline-none text-white transition-all" />
-                            <button type="button" onClick={handleVoiceSearch} className="absolute right-2 top-1.5 p-1 rounded-full bg-white/5 hover:bg-purple-600/50 text-gray-400 hover:text-white transition-all" title="Voice Search">
-                                <i className="ri-mic-fill"></i>
-                            </button>
-                        </form>
+                        {/* Hide main search when on News or Videos tabs - they have their own search bars */}
+                        {activeTab !== 'news' && activeTab !== 'videos' && (
+                            <form onSubmit={handleSearch} className="flex-1 relative">
+                                <i className="ri-search-line absolute left-3 top-2.5 text-gray-500"></i>
+                                <input
+                                    type="text"
+                                    value={query}
+                                    onChange={(e) => { setQuery(e.target.value); setShowMainSuggestions(true); }}
+                                    onFocus={() => setShowMainSuggestions(true)}
+                                    placeholder="Search sermons, news..."
+                                    className="w-full bg-white/5 border border-white/10 rounded-full py-2 pl-10 pr-12 text-sm focus:border-purple-500 outline-none text-white transition-all"
+                                />
+                                <button type="button" onClick={handleVoiceSearch} className="absolute right-2 top-1.5 p-1 rounded-full bg-white/5 hover:bg-purple-600/50 text-gray-400 hover:text-white transition-all" title="Voice Search">
+                                    <i className="ri-mic-fill"></i>
+                                </button>
+                                {showMainSuggestions && <SearchSuggestions query={query} type="web" onSelect={(s) => { setQuery(s); handleSearch(null, s); setShowMainSuggestions(false); }} onClose={() => setShowMainSuggestions(false)} />}
+                            </form>
+                        )}
                     </div>
                     <div className="flex items-center gap-6">
                         <button onClick={() => setActiveTab('news')} className={`flex flex-col items-center group ${activeTab === 'news' ? 'text-purple-400' : 'text-gray-400 hover:text-white'}`}><i className="ri-newspaper-fill text-xl"></i><span className="text-[10px] mt-0.5">News</span></button>
                         <button onClick={() => setActiveTab('videos')} className={`flex flex-col items-center group ${activeTab === 'videos' ? 'text-red-400' : 'text-gray-400 hover:text-white'}`}><i className="ri-youtube-fill text-xl"></i><span className="text-[10px] mt-0.5">Videos</span></button>
                         <button onClick={() => setActiveTab('admin')} className="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-cyan-500 flex items-center justify-center text-xs font-bold shadow-lg border border-white/20 hover:scale-110 transition-transform cursor-pointer" title="Admin Panel">
                             {user.charAt(0).toUpperCase()}
+                        </button>
+                        <button onClick={() => setActiveTab('superadmin')} className="w-8 h-8 rounded-full bg-gradient-to-br from-orange-500 to-red-500 flex items-center justify-center text-xs font-bold shadow-lg border border-white/20 hover:scale-110 transition-transform cursor-pointer" title="Super Admin">
+                            <i className="ri-shield-star-fill"></i>
                         </button>
                     </div>
                 </header>
@@ -1211,55 +1731,148 @@ const DashboardLayout = ({ user, onLogout }) => {
                     {/* View: Dashboard (Mixed Feed) */}
                     {activeTab === 'dashboard' && (
                         <div className="space-y-8 animate-fade-in pb-12">
-                            <h1 className="text-2xl font-bold flex items-center gap-2">
-                                <i className="ri-fire-line text-orange-500"></i> {searchResults ? `Results for "${query}"` : "Trending Now in Christendom"}
-                            </h1>
+                            {searchResults && (
+                                <h1 className="text-2xl font-bold flex items-center gap-2">
+                                    <i className="ri-search-eye-line text-purple-500"></i> Results for "{query}"
+                                </h1>
+                            )}
                             {loading && <div className="text-center py-10"><i className="ri-loader-4-line animate-spin text-4xl text-purple-500"></i></div>}
                             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
-                                {searchResults ? (
-                                    (searchResults.length > 0 ? searchResults : MOCK_NEWS).map((article, idx) => (
-                                        <NewsCard key={idx} article={article} onRead={setReaderUrl} isSaved={!!savedItems.find(i => i.url === article.url)} onToggleSave={toggleSave} />
-                                    ))
-                                ) : (
-                                    <>
-                                        {/* Trending / Live Feed Only */}
-                                        {liveNews === null ? (
-                                            <div className="col-span-full flex justify-center py-20">
-                                                <div className="flex flex-col items-center gap-4">
-                                                    <i className="ri-loader-4-line animate-spin text-5xl text-purple-500"></i>
-                                                    <p className="text-gray-400">Loading live updates...</p>
-                                                </div>
-                                            </div>
-                                        ) : liveNews.length > 0 ? (
-                                            liveNews.map((article, idx) => (
-                                                <NewsCard
-                                                    key={article.id || idx}
-                                                    article={article}
-                                                    onRead={setReaderUrl}
-                                                    isSaved={!!savedItems.find(i => (article.id && i.id === article.id) || i.url === article.url)}
-                                                    onToggleSave={toggleSave}
-                                                />
-                                            ))
+                                {searchResults && searchResults.length > 0 ? (
+                                    searchResults.map((item, idx) => (
+                                        item.result_type === 'video' || item.source_type === 'youtube' ? (
+                                            <VideoCard
+                                                key={item.id || idx}
+                                                video={item}
+                                                onWatch={setActiveVideo}
+                                                isSaved={!!savedItems.find(i => (item.id && i.id === item.id) || i.url === item.url)}
+                                                onToggleSave={toggleSave}
+                                            />
                                         ) : (
-                                            <div className="col-span-full text-center py-10 text-gray-500">
-                                                No live news currently available.
-                                            </div>
-                                        )}
-                                    </>
-                                )}
+                                            <NewsCard
+                                                key={item.id || idx}
+                                                article={item}
+                                                onRead={setReaderUrl}
+                                                isSaved={!!savedItems.find(i => i.url === item.url)}
+                                                onToggleSave={toggleSave}
+                                            />
+                                        )
+                                    ))
+                                ) : searchResults && searchResults.length === 0 ? (
+                                    <div className="col-span-full text-center py-10 text-gray-500">
+                                        {t('no_results')} for "{query}"
+                                    </div>
+                                ) : null}
                             </div>
+
+                            {/* Default View (No Search Results) */}
+                            {!searchResults && (
+                                <div className="space-y-12">
+                                    {/* Trending Videos Section */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-6">
+                                            <div>
+                                                <h2 className="text-2xl font-bold flex items-center gap-2">
+                                                    <i className="ri-fire-fill text-orange-500"></i> {getDynamicTitle(t('trending_title'), 'video')}
+                                                </h2>
+                                                <p className="text-gray-400 text-sm mt-1">{t('trending_desc')}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                                            {liveVideos ? (
+                                                liveVideos.length > 0 ? (
+                                                    liveVideos.slice(0, 4).map(video => (
+                                                        <VideoCard key={video.id} video={video} onWatch={setActiveVideo} isSaved={!!savedItems.find(i => (video.id && i.id === video.id) || i.url === video.url)} onToggleSave={toggleSave} />
+                                                    ))
+                                                ) : (
+                                                    <div className="col-span-4 text-center py-10 text-gray-500">{t('no_results')}</div>
+                                                )
+                                            ) : (
+                                                [...Array(4)].map((_, i) => (
+                                                    <div key={i} className="animate-pulse bg-[#1E1E1E] rounded-xl h-64 border border-white/5"></div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* News Section */}
+                                    <div>
+                                        <div className="flex items-center justify-between mb-6">
+                                            <div>
+                                                <h2 className="text-2xl font-bold flex items-center gap-2">
+                                                    <i className="ri-global-line text-blue-500"></i> {getDynamicTitle(t('news_title'), 'news')}
+                                                </h2>
+                                                <p className="text-gray-400 text-sm mt-1">{t('news_desc')}</p>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                                            {liveNews ? (
+                                                liveNews.length > 0 ? (
+                                                    liveNews.slice(0, 4).map(article => (
+                                                        <NewsCard key={article.id} article={article} onRead={setReaderUrl} isSaved={!!savedItems.find(i => (article.id && i.id === article.id) || i.url === article.url)} onToggleSave={toggleSave} />
+                                                    ))
+                                                ) : (
+                                                    <div className="col-span-full text-center py-10 text-gray-500">{t('no_results')}</div>
+                                                )
+                                            ) : (
+                                                [...Array(4)].map((_, i) => (
+                                                    <div key={i} className="animate-pulse bg-[#1E1E1E] rounded-xl h-48 border border-white/5"></div>
+                                                ))
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
 
                     {/* View: News */}
                     {activeTab === 'news' && (
-                        <div className="space-y-8 animate-fade-in pb-12">
-                            <div className="bg-gradient-to-r from-purple-900/40 to-black p-6 rounded-2xl border border-white/10 mb-8">
-                                <h1 className="text-3xl font-bold text-white mb-2">Christian News Feed</h1>
-                                <p className="text-gray-400">Updates from the Global Church.</p>
+                        <div className="space-y-6 animate-fade-in pb-12">
+                            <div className="bg-gradient-to-r from-purple-900/40 to-black p-6 rounded-2xl border border-white/10">
+                                <h1 className="text-3xl font-bold text-white mb-2">{getDynamicTitle("Christian News Feed", "news")}</h1>
+                                <p className="text-gray-400 mb-4">Updates from the Global Church.</p>
+
+                                {/* News Search Bar */}
+                                <form onSubmit={handleNewsSearch} className="relative max-w-xl">
+                                    <i className="ri-search-line absolute left-3 top-3 text-gray-500"></i>
+                                    <input
+                                        type="text"
+                                        value={newsQuery}
+                                        onChange={(e) => { setNewsQuery(e.target.value); setShowNewsSuggestions(true); }}
+                                        onFocus={() => setShowNewsSuggestions(true)}
+                                        placeholder="Search news articles..."
+                                        className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-10 pr-20 text-sm focus:border-purple-500 outline-none text-white"
+                                    />
+                                    {newsQuery && (
+                                        <button type="button" onClick={clearNewsSearch} className="absolute right-12 top-2 p-1 text-gray-400 hover:text-white">
+                                            <i className="ri-close-line"></i>
+                                        </button>
+                                    )}
+                                    <button type="submit" disabled={newsSearching} className="absolute right-2 top-1.5 px-3 py-1 bg-purple-600 hover:bg-purple-500 rounded text-sm font-medium disabled:opacity-50">
+                                        {newsSearching ? <i className="ri-loader-4-line animate-spin"></i> : 'Search'}
+                                    </button>
+                                    {showNewsSuggestions && <SearchSuggestions query={newsQuery} type="news" onSelect={(s) => { setNewsQuery(s); handleNewsSearch(null, s); setShowNewsSuggestions(false); }} onClose={() => setShowNewsSuggestions(false)} />}
+                                </form>
                             </div>
+
+                            {newsSearchResults && (
+                                <div className="flex items-center gap-2 text-sm text-gray-400">
+                                    <span>Found {newsSearchResults.length} results for "{newsQuery}"</span>
+                                    <button onClick={clearNewsSearch} className="text-purple-400 hover:underline">Clear</button>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                                {liveNews === null ? (
+                                {newsSearching ? (
+                                    <div className="col-span-full text-center py-10"><i className="ri-loader-4-line animate-spin text-4xl text-purple-500"></i></div>
+                                ) : newsSearchResults ? (
+                                    newsSearchResults.length > 0 ? newsSearchResults.map((item, idx) => (
+                                        <NewsCard key={item.id || idx} article={item} onRead={setReaderUrl} isSaved={!!savedItems.find(i => (item.id && i.id === item.id) || i.url === item.url)} onToggleSave={toggleSave} />
+                                    )) : (
+                                        <div className="col-span-full text-center py-10 text-gray-500">No news found for "{newsQuery}"</div>
+                                    )
+                                ) : liveNews === null ? (
                                     <div className="col-span-full text-center py-10"><i className="ri-loader-4-line animate-spin text-4xl text-purple-500"></i></div>
                                 ) : (
                                     (liveNews.length > 0 ? liveNews : []).map((item, idx) => (
@@ -1273,15 +1886,62 @@ const DashboardLayout = ({ user, onLogout }) => {
                     {/* View: Admin Dashboard */}
                     {activeTab === 'admin' && <AdminDashboard />}
 
+                    {/* View: Super Admin Dashboard */}
+                    {activeTab === 'superadmin' && <SuperAdminDashboard />}
+
                     {/* View: Videos */}
                     {activeTab === 'videos' && (
-                        <div className="space-y-8 animate-fade-in pb-12">
-                            <div className="bg-gradient-to-r from-red-900/40 to-black p-6 rounded-2xl border border-white/10 mb-8">
-                                <h1 className="text-3xl font-bold text-white mb-2">Trending Gospel Videos</h1>
-                                <p className="text-gray-400">Curated trending video content from YouTube.</p>
+                        <div className="space-y-6 animate-fade-in pb-12">
+                            <div className="bg-gradient-to-r from-red-900/40 to-black p-6 rounded-2xl border border-white/10">
+                                <h1 className="text-3xl font-bold text-white mb-2">{getDynamicTitle("Trending Gospel Videos", "video")}</h1>
+                                <p className="text-gray-400 mb-4">Curated trending video content from YouTube.</p>
+
+                                {/* Video Search Bar */}
+                                <form onSubmit={handleVideoSearch} className="relative max-w-xl">
+                                    <i className="ri-search-line absolute left-3 top-3 text-gray-500"></i>
+                                    <input
+                                        type="text"
+                                        value={videoQuery}
+                                        onChange={(e) => { setVideoQuery(e.target.value); setShowVideoSuggestions(true); }}
+                                        onFocus={() => setShowVideoSuggestions(true)}
+                                        placeholder="Search videos..."
+                                        className="w-full bg-black/40 border border-white/10 rounded-lg py-2.5 pl-10 pr-20 text-sm focus:border-red-500 outline-none text-white"
+                                    />
+                                    {videoQuery && (
+                                        <button type="button" onClick={clearVideoSearch} className="absolute right-12 top-2 p-1 text-gray-400 hover:text-white">
+                                            <i className="ri-close-line"></i>
+                                        </button>
+                                    )}
+                                    <button type="submit" disabled={videoSearching} className="absolute right-2 top-1.5 px-3 py-1 bg-red-600 hover:bg-red-500 rounded text-sm font-medium disabled:opacity-50">
+                                        {videoSearching ? <i className="ri-loader-4-line animate-spin"></i> : 'Search'}
+                                    </button>
+                                    {showVideoSuggestions && <SearchSuggestions query={videoQuery} type="video" onSelect={(s) => { setVideoQuery(s); handleVideoSearch(null, s); setShowVideoSuggestions(false); }} onClose={() => setShowVideoSuggestions(false)} />}
+                                </form>
                             </div>
+
+                            {videoSearchResults && (
+                                <div className="flex items-center gap-2 text-sm text-gray-400">
+                                    <span>Found {videoSearchResults.length} results for "{videoQuery}"</span>
+                                    <button onClick={clearVideoSearch} className="text-red-400 hover:underline">Clear</button>
+                                </div>
+                            )}
+
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                {liveVideos === null ? (
+                                {videoSearching ? (
+                                    <div className="col-span-full text-center py-10"><i className="ri-loader-4-line animate-spin text-4xl text-red-500"></i></div>
+                                ) : videoSearchResults ? (
+                                    videoSearchResults.length > 0 ? videoSearchResults.map((video, idx) => (
+                                        <VideoCard
+                                            key={video.id || idx}
+                                            video={video}
+                                            onWatch={setActiveVideo}
+                                            isSaved={!!savedItems.find(i => (video.id && i.id === video.id) || i.url === video.url)}
+                                            onToggleSave={toggleSave}
+                                        />
+                                    )) : (
+                                        <div className="col-span-full text-center py-10 text-gray-500">No videos found for "{videoQuery}"</div>
+                                    )
+                                ) : liveVideos === null ? (
                                     <div className="col-span-full text-center py-10"><i className="ri-loader-4-line animate-spin text-4xl text-red-500"></i></div>
                                 ) : (
                                     (liveVideos.length > 0 ? liveVideos : []).map((video, idx) => (
@@ -1368,14 +2028,32 @@ const DashboardLayout = ({ user, onLogout }) => {
             {/* Overlays */}
             {readerUrl && <ReaderModal url={readerUrl.url} topic={readerUrl.title} onClose={() => setReaderUrl(null)} />}
             {activeVideo && <VideoModal video={activeVideo} onClose={() => setActiveVideo(null)} />}
-            {legalOpen && <LegalAssistantModal onClose={() => setLegalOpen(false)} />}
+            {/* Legal Assistant Modal */}
+            {legalOpen && <LegalAssistantModal onClose={() => setLegalOpen(false)} lang={lang} />}
         </div >
     );
 };
 
 // --- Root Application ---
 const GyanBridgeApp = () => {
-    const [user, setUser] = useState(null);
+    // Initialize user from localStorage for session persistence
+    const [user, setUser] = useState(() => {
+        const savedUser = localStorage.getItem('gb_user');
+        return savedUser || null;
+    });
+
+    // Handle login - save to localStorage
+    const handleLogin = (username) => {
+        localStorage.setItem('gb_user', username);
+        setUser(username);
+    };
+
+    // Handle logout - clear localStorage
+    const handleLogout = () => {
+        localStorage.removeItem('gb_user');
+        setUser(null);
+    };
+
     useEffect(() => {
         const style = document.createElement('style');
         style.innerHTML = `
@@ -1390,7 +2068,7 @@ const GyanBridgeApp = () => {
 
     return (
         <>
-            {!user ? <LoginEntry onLogin={setUser} /> : <DashboardLayout user={user} onLogout={() => setUser(null)} />}
+            {!user ? <LoginEntry onLogin={handleLogin} /> : <DashboardLayout user={user} onLogout={handleLogout} />}
         </>
     );
 };

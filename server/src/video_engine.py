@@ -11,9 +11,12 @@ from datetime import datetime
 # Database File Path
 DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'videos.db')
 
-# Curated List of High-Quality Christian Channels (Usernames/Custom URLs)
-# These provide the core "feed" content.
-TARGET_CHANNELS = [
+from src.topic_manager import topic_manager
+
+# Curated Channel Modules
+# "Christianity" Module (Default)
+CHRISTIAN_CHANNELS = [
+    "jesusredeems",      # Jesus Redeems Ministries (High Priority)
     "vaticannews",       # Vatican News
     "thebibleproject",   # The Bible Project
     "desiringGod",       # Desiring God
@@ -22,12 +25,56 @@ TARGET_CHANNELS = [
     "700club",           # The 700 Club
     "CBNNews",           # CBN News
     "CatholicNewsAgency",# CNA
-    "AOIMin",            # Alpha Omega Ministries (Apologetics)
+    "AOIMin",            # Alpha Omega Ministries
     "WretchedNetwork",   # Wretched
     "CrosswayBooks",     # Crossway
-    "Ligonierministries",# Ligonier
-    "jesusredeems"       # Jesus Redeems Ministries
+    "Ligonierministries" # Ligonier
 ]
+
+# "Technology" Module
+TECH_CHANNELS = [
+    "mkbhd",             # MKBHD
+    "veritasium",        # Veritasium
+    "LinusTechTips",     # Linus Tech Tips
+    "TED",               # TED
+    "mrwhosetheboss"     # MrWhoseTheBoss
+]
+
+# "Science" Module
+SCIENCE_CHANNELS = [
+    "Kurzgesagt",        # Kurzgesagt
+    "scishow",           # SciShow
+    "smartereveryday",   # Smarter Every Day
+    "nasa",              # NASA
+    "NationalGeographic" # Nat Geo
+]
+
+# "Sports" Module
+SPORTS_CHANNELS = [
+    "ESPN",              # ESPN
+    "NBA",               # NBA
+    "ICC",               # ICC Cricket
+    "olympics",          # Olympics
+    "FIFA"               # FIFA
+]
+
+# "Global News" Module
+NEWS_CHANNELS = [
+    "BBCNews",           # BBC
+    "AlJazeeraEnglish",  # Al Jazeera
+    "DWNews",            # DW News
+    "CNN"                # CNN
+]
+
+# Map Topic Keys (from Super Admin) to Channel Lists
+TOPIC_CHANNEL_MAP = {
+    "Christianity": CHRISTIAN_CHANNELS,
+    "Technology": TECH_CHANNELS,
+    "Science": SCIENCE_CHANNELS,
+    "Sports": SPORTS_CHANNELS,
+    "Global News": NEWS_CHANNELS
+}
+
 
 # Topics for discovery (Backup/Variety)
 TARGET_TOPICS = [
@@ -99,26 +146,49 @@ class VideoEngine:
         """Orchestrates the fetching from Channels and Topics."""
         new_items = []
         
+        # 1. Determine Active Channels based on Super Admin Topics
+        active_topics = topic_manager.get_active_keywords()
+        target_channels = set()
+        
+        if active_topics:
+            for topic in active_topics:
+                if topic in TOPIC_CHANNEL_MAP:
+                    target_channels.update(TOPIC_CHANNEL_MAP[topic])
+        
+        # Fallback ONLY if absolutely no topics selected (safety net)
+        # But strictly, if user disables everything, they get nothing.
+        # Let's add Christianity by default if list is empty to prevent empty DB?
+        # User said "Super Admin chooses". So if they chose nothing, they get nothing.
+        # But let's assume they want Christianity if nothing else is configured?
+        # Let's trust the map.
+        
+        if not target_channels and not active_topics:
+             print("⚠️ [VideoEngine] No topics active. Defaulting to Christianity.")
+             target_channels.update(CHRISTIAN_CHANNELS)
+            
+        print(f"🔄 [VideoEngine] Fetching from {len(target_channels)} channels (Topics: {active_topics})...")
+
         # 1. Fetch from Channels
-        print(f"📡 [VideoEngine] Fetching from {len(TARGET_CHANNELS)} channels...")
-        for channel in TARGET_CHANNELS:
+        for channel in target_channels:
             try:
                 # Fetch last 3 videos from each channel
                 videos = scrapetube.get_channel(channel_username=channel, limit=3)
                 processed = self._process_videos(videos, source_tag="Channel")
                 new_items.extend(processed)
             except Exception as e:
-                print(f"⚠️ [VideoEngine] Failed to fetch channel '{channel}': {e}")
+                # print(f"⚠️ [VideoEngine] Failed to fetch channel '{channel}': {e}")
+                pass
 
-        # 2. Fetch from Topics (for variety)
-        print(f"📡 [VideoEngine] Fetching from topics...")
-        for topic in TARGET_TOPICS:
-            try:
-                videos = scrapetube.get_search(topic, limit=5)
-                processed = self._process_videos(videos, source_tag="Topic")
-                new_items.extend(processed)
-            except Exception as e:
-                 print(f"⚠️ [VideoEngine] Failed to fetch topic '{topic}': {e}")
+        # 2. Fetch from Topics (Dynamic)
+        # Scan active topics and search loosely for them
+        for topic in active_topics or ["Christianity"]:
+             try:
+                 query = f"{topic} latest"
+                 videos = scrapetube.get_search(query, limit=5)
+                 processed = self._process_videos(videos, source_tag="Topic")
+                 new_items.extend(processed)
+             except Exception as e:
+                 pass
 
         # 3. Deduplicate and Save
         if new_items:
@@ -288,16 +358,33 @@ class VideoEngine:
         conn.close()
         return True
 
-    def search(self, query, limit=20):
+    def search(self, query, limit=20, lang='en'):
         """
         Live Search for Videos.
         """
         results = []
         try:
-            # Add context to query
-            search_query = f"{query} Christian" if "christian" not in query.lower() else query
+            # 1. Enforce Strict Topic Context
+            active_topics = topic_manager.get_active_keywords()
+            context_keywords = [t for t in active_topics if t not in ["Christianity", "Global News"]]
             
-            print(f"🔎 [VideoEngine] Searching YouTube for: {search_query}")
+            # If we have strict topics (Science, Tech, Sports), append them to the query
+            # This ensures "Stars" -> "Stars Science" and "Song" -> "Song Science"
+            if context_keywords:
+                 topic_suffix = " ".join(context_keywords)
+                 query = f"{query} {topic_suffix}"
+
+            # 2. Add Language Context
+            if lang == 'hi':
+                 search_query = f"{query} hindi" 
+            elif lang == 'ta':
+                 search_query = f"{query} tamil"
+            else:
+                 search_query = query 
+
+
+            
+            print(f"🔎 [VideoEngine] Searching YouTube for: {search_query} (Lang: {lang})")
             videos = scrapetube.get_search(search_query, limit=limit)
             
             # Normalize to match our internal format
@@ -313,7 +400,47 @@ class VideoEngine:
         except Exception as e:
             print(f"❌ [VideoEngine] Search failed: {e}")
             
+        # Priority Boosting: Jesus Redeems / Mohan C Lazarus
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        
+        def get_priority_score(video):
+             score = 0
+             text = (video.get('title', '') + ' ' + video.get('channel', '')).lower()
+             for k in priority_keywords:
+                 if k in text: score += 10
+             return score
+
+        results.sort(key=get_priority_score, reverse=True)
         return results
+
+    def get_videos_by_language(self, lang, limit=50, topic_query=None):
+        """Fetch localized videos via Search. If topic_query is active, use it."""
+        if topic_query:
+             # Topic Translation Map
+             transl_map = {
+                 'en': {"Sports": "Sports", "Christianity": "Christianity", "Science": "Science", "Technology": "Technology", "Business": "Business"},
+                 'hi': {"Sports": "खेल", "Christianity": "ईसाई धर्म", "Science": "विज्ञान", "Technology": "प्रौद्योगिकी", "Business": "व्यापार"},
+                 'ta': {"Sports": "விளையாட்டு", "Christianity": "கிறிஸ்தவம்", "Science": "அறிவியல்", "Technology": "தொழில்நுட்பம்", "Business": "வர்த்தகம்"},
+                 'ml': {"Sports": "കായികം", "Christianity": "ക്രിസ്തുമതം", "Science": "ശാസ്ത്രം"},
+                 'te': {"Sports": "క్రీడలు", "Christianity": "క్రైస్తవ మతం", "Science": "సైన్స్"}
+             }
+             
+             final_query = topic_query
+             if lang in transl_map:
+                 for en_key, local_val in transl_map[lang].items():
+                     final_query = final_query.replace(f'"{en_key}"', f'"{local_val}"')
+                     final_query = final_query.replace(en_key, local_val)
+             
+             return self.search(final_query, limit=limit, lang=lang)
+
+        if lang == 'hi':
+            query = "यीशु मसीह के गीत और संदेश" # Jesus Songs & Messages
+        elif lang == 'ta':
+            query = "தமிழ் கிறிஸ்தவ பாடல்கள்" # Tamil Christian Songs
+        else:
+            query = "Christian Gospel"
+            
+        return self.search(query, limit=limit, lang=lang)
 
 # Singleton Interface (optional, if needed by api.py import style)
 # engine = VideoEngine() 

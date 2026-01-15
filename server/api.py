@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 import os
 import re
+import requests
 from datetime import datetime
 from dotenv import load_dotenv
 # Fix imports since we moved files
@@ -38,6 +39,7 @@ app = Flask(__name__, static_folder='static', template_folder='templates')
 CORS(app)
 
 from src.video_engine import VideoEngine
+from src.topic_manager import topic_manager
 
 # Initialize RAG & LLM
 rag_engine = RAGEngine()
@@ -78,14 +80,47 @@ def search_endpoint():
     time_filter = data.get('time_filter')
     use_quota = data.get('use_quota', True)
     search_type = data.get('type', 'web') # 'web', 'news', 'video'
+    lang = data.get('lang', 'en')
     
+    # [NEW] Super Admin Topic Filtering
+    active_keywords = topic_manager.get_active_keywords()
+    
+    # If topic is not provided, or generic, consider injecting active topics? 
+    # Current Search behavior: user provides explicit 'topic'. 
+    # We should APPEND Active Topics to the search context if it's a generic "feed" request, 
+    # OBUT for explicit user search, we might not want to restrict it unless requested.
+    # Requirement: "only show case and show in the ui and search results"
+    # Strategy: Append active topics to the query implicitly OR post-filter?
+    # Appending is better for engines.
+    
+    # Construct a filter string from active topics
+    # e.g. "Christianity OR Science"
+    if active_keywords:
+        topic_filter = " OR ".join([f'"{k}"' for k in active_keywords])
+        # If the user's query doesn't already contain one of these, we might want to boost them?
+        # Actually the requirement says: "which content topics is selected by the super admin is only show case"
+        # This implies a RESTRICTION.
+        # Let's append it to the query to guide the search engine.
+        full_query = f"({topic}) AND ({topic_filter})"
+    else:
+        # If NO topics are active, strict interpretation means show nothing? 
+        # Or fall back to everything? Let's assume fallback to query only if list is empty to avoid 0 results.
+        full_query = topic
+
     if not topic:
         return jsonify({"error": "Topic is required"}), 400
 
     # 1. Video Search
     if search_type == 'video':
         try:
-            results = video_engine.search(topic, limit=limit)
+            # If non-English, perform live localized search
+            if lang != 'en':
+                results = video_engine.search(full_query, limit=limit, lang=lang)
+            else:
+                # English default: Database Approved content (or search if query is specific)
+                # Note: 'full_query' is populated. If it's just a generic feed request, we might want to check that?
+                # But here in /search, it's always a specific query.
+                results = video_engine.search(full_query, limit=limit)
             return jsonify({"results": results, "count": len(results), "errors": []})
         except Exception as e:
             return jsonify({"results": [], "errors": [str(e)], "count": 0}), 500
@@ -93,7 +128,11 @@ def search_endpoint():
     # 2. News Search
     elif search_type == 'news':
         try:
-             results = news_feeder.search(topic, limit=limit)
+             # Use filtered query
+             if lang != 'en':
+                 results = news_feeder.search(full_query, limit=limit, lang=lang)
+             else:
+                 results = news_feeder.search(full_query, limit=limit)
              return jsonify({"results": results, "count": len(results), "errors": []})
         except Exception as e:
              return jsonify({"results": [], "errors": [str(e)], "count": 0}), 500
@@ -172,9 +211,23 @@ def scrape_endpoint():
 
 @app.route('/api/news', methods=['GET'])
 def news_endpoint():
-    """Fetch live Christian news"""
+    """Fetch live Christian news (Localized or Cached)"""
     try:
-        articles = news_feeder.get_news(limit=1000)
+        lang = request.args.get('lang', 'en')
+        topic_query = topic_manager.get_active_topic_query()
+        
+        if lang != 'en':
+            # Localized Search (with Topic Enforcement)
+            articles = news_feeder.get_news_by_language(lang, topic_query=topic_query)
+        else:
+            # English Default (DB) - Note: DB might need filtering, but for now we enforce via Live Search 
+            # If we want strict topic enforcement in English too, we should search instead of dump DB.
+            # Decision: Use Search for English too if topics are enforced.
+            if topic_query:
+                 articles = news_feeder.search(topic_query, limit=50) # Use active topics as query
+            else:
+                 articles = news_feeder.get_news(limit=1000)
+            
         return jsonify(articles)
     except Exception as e:
         print(f"News Error: {e}")
@@ -182,10 +235,21 @@ def news_endpoint():
 
 @app.route('/api/videos', methods=['GET'])
 def videos_endpoint():
-    """Fetch trending Christian videos (From Local DB)"""
+    """Fetch trending Christian videos (Localized or Local DB)"""
     try:
-        # Use new VideoEngine with SQLite backend
-        videos = video_engine.get_trending(limit=50)
+        lang = request.args.get('lang', 'en')
+        topic_query = topic_manager.get_active_topic_query()
+        
+        if lang != 'en':
+             # Localized Search (with Topic Enforcement)
+             videos = video_engine.get_videos_by_language(lang, topic_query=topic_query)
+        else:
+             # English Default
+             if topic_query:
+                 # Search YouTube for active topics
+                 videos = video_engine.search(topic_query, limit=50)
+             else:
+                 videos = video_engine.get_trending(limit=50)
         return jsonify(videos)
     except Exception as e:
         print(f"Video Error: {e}")
@@ -256,11 +320,46 @@ def admin_stats_endpoint():
 def admin_login_endpoint():
     """Admin Authentication"""
     data = request.json
+    username = data.get('username')
     password = data.get('password')
-    # Simple hardcoded check
-    if password == 'admin':
+    # Admin credentials (in production, use environment variables and hashed passwords)
+    ADMIN_USERNAME = "admin"
+    ADMIN_PASSWORD = "gyanbridge123"
+    
+    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
         return jsonify({"success": True, "token": "valid_session"})
-    return jsonify({"error": "Invalid Password"}), 401
+    return jsonify({"error": "Invalid username or password"}), 401
+
+
+# --- Super Admin Endpoints ---
+
+@app.route('/api/superadmin/login', methods=['POST'])
+def superadmin_login():
+    """Super Admin Authentication"""
+    data = request.json
+    username = data.get('username')
+    password = data.get('password')
+    
+    # [Security] Hardcoded for now per plan
+    if username == "superadmin" and password == "genesis123":
+        return jsonify({"success": True, "token": "super_session"})
+    return jsonify({"error": "Invalid Super Admin credentials"}), 401
+
+@app.route('/api/superadmin/topics', methods=['GET', 'POST'])
+def superadmin_topics():
+    """Get or Update Active Topics"""
+    if request.method == 'GET':
+        return jsonify(topic_manager.get_topics())
+    
+    data = request.json
+    success = topic_manager.update_topic(data.get('topic'), data.get('status'))
+    return jsonify({"success": success})
+
+@app.route('/api/topics/active', methods=['GET'])
+def active_topics_endpoint():
+    """Get list of active topic names for UI Headers"""
+    return jsonify({"topics": topic_manager.get_active_keywords()})
+
 
 @app.route('/api/admin/content', methods=['GET'])
 def admin_content_endpoint():
@@ -487,6 +586,7 @@ def admin_analytics_query():
 def analytics_query():
     data = request.json
     query = data.get('query')
+    lang = data.get('lang', 'en')
     
     if not query:
         return jsonify({"error": "Query is required"}), 400
@@ -517,7 +617,7 @@ def analytics_query():
         # STEP 3: Generate Analysis
         print("   -> generating graph...")
         # Pass the rich hybrid context explicitly
-        result = llm_analytics.analyze_and_graph(query, direct_context=context_str)
+        result = llm_analytics.analyze_and_graph(query, direct_context=context_str, lang=lang)
         
         return jsonify(result)
         
@@ -538,15 +638,45 @@ def analytics_query():
 def ask_legal():
     data = request.json
     query = data.get('query')
+    lang = data.get('lang', 'en')
+    
     if not query:
         return jsonify({'error': 'Query is required'}), 400
     
     try:
-        result = legal_assistant.ask(query)
+        result = legal_assistant.ask(query, lang=lang)
         return jsonify(result)
     except Exception as e:
         print(f"Legal API Error: {e}")
         return jsonify({'error': str(e)}), 500
+
+@app.route('/api/suggestions', methods=['GET'])
+def suggestions_endpoint():
+    """Proxy for Search Suggestions"""
+    query = request.args.get('q', '')
+    s_type = request.args.get('type', 'web')
+    
+    if not query: return jsonify([])
+    
+    try:
+        # YouTube Suggestions for video
+        if s_type == 'video':
+            url = f"http://suggestqueries.google.com/complete/search?client=firefox&ds=yt&q={query}"
+        # Google News/Web Suggestions
+        else:
+            url = f"http://suggestqueries.google.com/complete/search?client=firefox&q={query}"
+            
+        resp = requests.get(url, timeout=2)
+        if resp.status_code == 200:
+            # Format: ["query", ["suggestion1", "suggestion2", ...]]
+            data = resp.json()
+            if len(data) >= 2:
+                return jsonify(data[1])
+                
+        return jsonify([])
+    except Exception as e:
+        print(f"Suggestion Error: {e}")
+        return jsonify([])
 
 if __name__ == '__main__':
     # Ensure templates are auto-reloaded

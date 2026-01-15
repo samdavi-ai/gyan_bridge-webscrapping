@@ -606,7 +606,10 @@ const VideoModal = ({ video, onClose }) => {
 // --- Component: Legal Assistant Modal ---
 // --- Component: Legal Assistant Modal ---
 const LegalAssistantModal = ({ onClose, lang }) => {
-    const [messages, setMessages] = useState([{ role: 'assistant', content: "Hello! I am your Legal Assistant. I can help you find Acts, Procedures, and relevant Case Laws. Ask me anything!" }]);
+    // Helper for Translation
+    const t = (key) => (TRANSLATIONS[lang] && TRANSLATIONS[lang][key]) ? TRANSLATIONS[lang][key] : key;
+
+    const [messages, setMessages] = useState(() => ([{ role: 'assistant', content: t('legal_intro') }]));
     const [query, setQuery] = useState('');
     const [loading, setLoading] = useState(false);
     const messagesEndRef = useRef(null);
@@ -706,8 +709,8 @@ const LegalAssistantModal = ({ onClose, lang }) => {
                             <i className="ri-scales-3-fill text-indigo-400 text-2xl drop-shadow-md"></i>
                         </div>
                         <div>
-                            <h3 className="text-white font-bold text-xl tracking-wide font-['Rajdhani']">Legal Assistant</h3>
-                            <p className="text-sm text-gray-400 font-medium tracking-wide">Constitutional & Minority Rights Guide</p>
+                            <h3 className="text-white font-bold text-xl tracking-wide font-['Rajdhani']">{t('legal')}</h3>
+                            <p className="text-sm text-gray-400 font-medium tracking-wide">{t('constitutional_guide')}</p>
                         </div>
                     </div>
                     <button onClick={onClose} className="p-2.5 hover:bg-white/10 rounded-full transition-colors group">
@@ -745,7 +748,7 @@ const LegalAssistantModal = ({ onClose, lang }) => {
                                                 className={`mt-4 flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold uppercase tracking-wider transition-all ${isSpeaking ? 'bg-red-500/20 text-red-400 border border-red-500/30 animate-pulse' : 'bg-white/5 text-gray-400 hover:bg-white/10'}`}
                                             >
                                                 <i className={`ri-${isSpeaking ? 'stop-circle-line' : 'volume-up-line'} text-lg`}></i>
-                                                {isSpeaking ? 'Stop Reading' : 'Read Aloud'}
+                                                {isSpeaking ? 'Stop Reading' : t('read_aloud')}
                                             </button>
 
                                             {/* Section: Acts */}
@@ -817,7 +820,7 @@ const LegalAssistantModal = ({ onClose, lang }) => {
                                 </div>
                                 {msg.role === 'assistant' && (
                                     <div className="text-xs text-gray-600 mt-2 ml-2 flex items-center gap-2">
-                                        <span>Verified AI Response</span>
+                                        <span>{t('verified_ai_response')}</span>
                                         <span className="w-1 h-1 rounded-full bg-gray-600"></span>
                                         <span>{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                                     </div>
@@ -847,7 +850,7 @@ const LegalAssistantModal = ({ onClose, lang }) => {
                             <input
                                 type="text"
                                 className="w-full bg-transparent border-none rounded-2xl py-5 pl-6 pr-24 text-white text-lg placeholder-gray-500 focus:ring-0"
-                                placeholder="Ask about church bylaws, property disputes, or FCRA regulations..."
+                                placeholder={t('legal_placeholder')}
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 onKeyDown={(e) => e.key === 'Enter' && handleSend()}

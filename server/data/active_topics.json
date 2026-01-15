@@ -1,6 +1,6 @@
 {
-    "Christianity": false,
-    "Science": true,
+    "Christianity": true,
+    "Science": false,
     "Global News": false,
     "Sports": false,
     "Technology": false

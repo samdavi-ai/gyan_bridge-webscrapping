@@ -166,17 +166,31 @@ class VideoEngine:
              print("⚠️ [VideoEngine] No topics active. Defaulting to Christianity.")
              target_channels.update(CHRISTIAN_CHANNELS)
             
+        # [FIX] ALWAYS fetch Priority Channels (Jesus Redeems) regardless of topic
+        # This ensures JRM content is always available for the prioritization logic
+        priority_channels = ["jesusredeems"] 
+        target_channels.update(priority_channels)
+
         print(f"🔄 [VideoEngine] Fetching from {len(target_channels)} channels (Topics: {active_topics})...")
 
         # 1. Fetch from Channels
         for channel in target_channels:
             try:
-                # Fetch last 3 videos from each channel
-                videos = scrapetube.get_channel(channel_username=channel, limit=3)
-                processed = self._process_videos(videos, source_tag="Channel")
-                new_items.extend(processed)
+                # [ENHANCED] Try channel fetch, fallback to search if channel blocked/failing
+                videos = None
+                try:
+                    videos = scrapetube.get_channel(channel_username=channel, limit=3)
+                    processed = self._process_videos(videos, source_tag="Channel")
+                    if not processed: raise Exception("No videos in channel stream")
+                    new_items.extend(processed)
+                except Exception:
+                    # Fallback to search for the channel name
+                    # print(f"⚠️ [VideoEngine] Channel fetch failed for '{channel}'. Falling back to search...")
+                    search_query = channel if channel != "jesusredeems" else "Jesus Redeems Ministries"
+                    videos = scrapetube.get_search(search_query, limit=3)
+                    processed = self._process_videos(videos, source_tag="ChannelFallback")
+                    new_items.extend(processed)
             except Exception as e:
-                # print(f"⚠️ [VideoEngine] Failed to fetch channel '{channel}': {e}")
                 pass
 
         # 2. Fetch from Topics (Dynamic)
@@ -332,10 +346,27 @@ class VideoEngine:
         
         if not rows:
              # Fallback if DB is completely empty (e.g. first run)
-             # self._fetch_cycle() # Dangerous to call here if it takes long?
              pass 
              
-        return [dict(row) for row in rows]
+        # Convert to dicts
+        all_videos = [dict(row) for row in rows]
+        
+        # --- PRIORITY BOOST: Jesus Redeems Ministries ---
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        
+        def get_priority_score(item):
+            # Higher score = top of list
+            text = (item.get('title', '') + ' ' + item.get('channel', '')).lower()
+            for k in priority_keywords:
+                if k in text: 
+                    return 2  # High Priority
+            return 1 # Normal
+            
+        # Sort: Primary = Priority (Desc), Secondary = Timestamp (Desc)
+        all_videos.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
+        # ------------------------------------------------
+        
+        return all_videos
 
     def get_all_videos(self):
         """Admin: Fetch all videos."""
@@ -430,6 +461,10 @@ class VideoEngine:
                  for en_key, local_val in transl_map[lang].items():
                      final_query = final_query.replace(f'"{en_key}"', f'"{local_val}"')
                      final_query = final_query.replace(en_key, local_val)
+             
+             # [FIX] Always include Ministry Boost regardless of topic
+             ministry_boost = "Jesus Redeems Ministries OR Mohan C Lazarus"
+             final_query = f"({final_query}) OR ({ministry_boost})"
              
              return self.search(final_query, limit=limit, lang=lang)
 

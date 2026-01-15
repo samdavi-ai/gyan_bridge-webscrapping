@@ -173,11 +173,30 @@ class NewsFeeder:
         # Convert to dicts
         all_news = [dict(row) for row in rows]
         
-        # Geo Sort (Optional enhancement)
-        try:
-             return self.sorter.sort_results(all_news)
-        except:
-             return all_news
+        # --- PRIORITY BOOST: Jesus Redeems Ministries ---
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        
+        def get_priority_score(item):
+            # Higher score = top of list
+            # 1. Check Keywords
+            text = (item.get('title', '') + ' ' + item.get('source', '') + ' ' + item.get('snippet', '')).lower()
+            for k in priority_keywords:
+                if k in text: 
+                    return 2  # High Priority
+            return 1 # Normal
+            
+        # Sort: Primary = Priority (Desc), Secondary = Timestamp (Desc)
+        all_news.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
+        # ------------------------------------------------
+        
+        # Geo Sort (Optional enhancement) - Apply ONLY to non-priority items?
+        # Or just return the prioritised list. The user wants priority for JR.
+        # If we run geo-sorter, it might shuffle priority items down if they are "Global" vs "Local".
+        # Strategy: Keep Priority items at top, Geo-Sort the rest?
+        # For simplicity and robustness, let's return the prioritised list directly for now, 
+        # as GeoSorter might not be fully tuned for this override.
+        
+        return all_news
 
     def get_all_news(self):
         """Admin: Fetch ALL news (Approved & Blocked)."""
@@ -286,17 +305,9 @@ class NewsFeeder:
                     final_query = final_query.replace(f'"{en_key}"', f'"{local_val}"') # Replace quoted exact matches
                     final_query = final_query.replace(en_key, local_val)     # Replace loose matches
             
-            # Combine: (Translator Topic) OR (Ministry Boost)
-            # STRICT MODE: Only boost Jesus Redeems if Christianity/Christian is roughly in the desired topics.
-            # If user selected ONLY "Technology", they want Tech news, not Jesus Redeems.
-            
-            is_religious_topic = "Christianity" in topic_query or "Christian" in topic_query
-            
-            if is_religious_topic:
-                 final_query = f"({final_query}) OR ({ministry_boost})"
-            else:
-                 # Strict Topic Content
-                 final_query = final_query 
+            # [FIX] Always include Ministry Boost regardless of topic being religious or not
+            # because the user requested priority for JRM data everywhere.
+            final_query = f"({final_query}) OR ({ministry_boost})"
 
             return self.search(final_query, limit=limit, lang=lang)
 
@@ -308,7 +319,21 @@ class NewsFeeder:
         else:
             query = f"({ministry_boost}) OR Christian News India"
             
-        return self.search(query, limit=limit, lang=lang)
+        results = self.search(query, limit=limit, lang=lang)
+        
+        # --- PRIORITY BOOST: Jesus Redeems Ministries (Post-Search Sort) ---
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        
+        def get_priority_score(item):
+            text = (item.get('title', '') + ' ' + item.get('source', '') + ' ' + item.get('snippet', '')).lower()
+            for k in priority_keywords:
+                if k in text: return 2
+            return 1
+            
+        # Resort results
+        results.sort(key=lambda x: (get_priority_score(x), x.get('published', '')), reverse=True)
+        
+        return results
 
     def _fetch_and_store(self):
         print(f"🔄 [NewsFeeder] Determine Active Topics & Feeds...")
@@ -365,6 +390,21 @@ class NewsFeeder:
              for url in self.feeds:
                  all_target_feeds.append((url, "Christianity"))
         
+
+        # [FIX] ALWAYS fetch Priority Feeds (Jesus Redeems)
+        # Identify JRM feeds from self.feeds (Strings containing 'jesus' or 'redeems')
+        # Or hardcode the specific indices labels from __init__
+        jrm_feeds = [
+            'https://jesusredeems.com/feed',
+            'https://news.google.com/rss/search?q=Jesus+Redeems+Ministries&hl=en-IN&gl=IN&ceid=IN:en',
+            'https://news.google.com/rss/search?q=site:jesusredeems.com&hl=en-IN&gl=IN&ceid=IN:en'
+        ]
+        
+        for url in jrm_feeds:
+            # Avoid duplicates if already added via Christianity topic
+            if not any(f[0] == url for f in all_target_feeds):
+                all_target_feeds.append((url, "Christianity"))
+
         print(f"🔄 [NewsFeeder] Fetching from {len(all_target_feeds)} feeds...")
 
         def process_feed_entry(entry, source_name):
@@ -417,7 +457,7 @@ class NewsFeeder:
         seen_titles = set()
         
         # Filters
-        christian_keywords = ['church', 'christian', 'christ', 'bishop', 'pastor', 'ministry', 'diocese', 'vatican', 'catholic', 'protestant', 'CSI', 'gospel', 'prayer', 'worship', 'faith', 'bible', 'religious', 'persecution']
+        christian_keywords = ['church', 'christian', 'christ', 'jesus', 'mohan', 'bishop', 'pastor', 'ministry', 'diocese', 'vatican', 'catholic', 'protestant', 'CSI', 'gospel', 'prayer', 'worship', 'faith', 'bible', 'religious', 'persecution']
         christian_regex = re.compile('|'.join(map(re.escape, christian_keywords)), re.IGNORECASE)
 
         valid_news = []
@@ -457,8 +497,10 @@ class NewsFeeder:
                           (item['id'], item['title'], item['url'], item['published'], item['source'], item['image'], item['guid'], item['timestamp'], item['snippet']))
         
         # Cleanup
-        cutoff = time.time() - (3 * 24 * 3600)
-        c.execute("DELETE FROM news WHERE timestamp < ? AND is_approved = 1", (cutoff,))
+        # Increase window to 7 days and EXEMPT JRM content from aggressive deletion 
+        # to ensure it stays in "Trending" even if updates are slow.
+        cutoff = time.time() - (7 * 24 * 3600)
+        c.execute("DELETE FROM news WHERE timestamp < ? AND is_approved = 1 AND title NOT LIKE '%Jesus%' AND title NOT LIKE '%Mohan%'", (cutoff,))
         conn.commit()
         conn.close()
         print("✅ [NewsFeeder] DB Updated.")

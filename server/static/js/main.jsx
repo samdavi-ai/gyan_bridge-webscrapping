@@ -28,6 +28,12 @@ const TRANSLATIONS = {
         watch_now: "Watch Now",
         saved: "Saved",
         save: "Save",
+        // Legal Assistant
+        legal_intro: "Hello! I am your Legal Assistant. I can help you find Acts, Procedures, and relevant Case Laws. Ask me anything!",
+        legal_placeholder: "Ask about church bylaws, property disputes, or FCRA regulations...",
+        constitutional_guide: "Constitutional & Minority Rights Guide",
+        verified_ai_response: "Verified AI Response",
+        read_aloud: "READ ALOUD",
         // Dynamic Topics
         Sports: "Sports",
         Technology: "Technology",
@@ -61,6 +67,12 @@ const TRANSLATIONS = {
         watch_now: "अभी देखें",
         saved: "सहेजा गया",
         save: "सहेजें",
+        // Legal Assistant
+        legal_intro: "नमस्ते! मैं आपका कानूनी सहायक हूँ। मैं अधिनियम, प्रक्रियाएं और केस कानून खोजने में आपकी सहायता कर सकता हूँ।",
+        legal_placeholder: "चर्च उपनियम, संपत्ति विवाद, या FCRA नियमों के बारे में पूछें...",
+        constitutional_guide: "संवैधानिक और अल्पसंख्यक अधिकार गाइड",
+        verified_ai_response: "सत्यापित एआई प्रतिक्रिया",
+        read_aloud: "जोर से पढ़ें",
         // Dynamic Topics
         Sports: "खेल",
         Technology: "प्रौद्योगिकी",
@@ -94,6 +106,12 @@ const TRANSLATIONS = {
         watch_now: "இப்போது பார்க்கவும்",
         saved: "சேமிக்கப்பட்டது",
         save: "சேமி",
+        // Legal Assistant
+        legal_intro: "வணக்கம்! நான் உங்கள் சட்ட உதவியாளர். சட்டங்கள், நடைமுறைகள் மற்றும் வழக்குத் தீர்ப்புகளைக் கண்டறிய நான் உதவ முடியும்.",
+        legal_placeholder: "தேவாலய விதிகள், சொத்து தகராறுகள் அல்லது FCRA விதிமுறைகள் பற்றி கேட்கவும்...",
+        constitutional_guide: "அரசியலமைப்பு மற்றும் சிறுபான்மை உரிமைகள் வழிகாட்டி",
+        verified_ai_response: "சரிபார்க்கப்பட்ட AI பதில்",
+        read_aloud: "உரக்கப் படியுங்கள்",
         // Dynamic Topics
         Sports: "விளையாட்டு",
         Technology: "தொழில்நுட்பம்",

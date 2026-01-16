@@ -8,9 +8,10 @@ import trafilatura
 import sqlite3
 import os
 import threading
-from bs4 import BeautifulSoup
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from src.geo_sorter import GeoSorter
+from bs4 import BeautifulSoup
+import requests
+import trafilatura
 
 DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'news.db')
 
@@ -128,19 +129,30 @@ class NewsFeeder:
         return None
 
     def _fetch_og_image(self, url):
+        """Aggressively fetch og:image from the target URL."""
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
         try:
-            final_resp = self.session.get(url, timeout=5, stream=True, allow_redirects=True)
-            final_url = final_resp.url
-            if 'text/html' in final_resp.headers.get('Content-Type', ''):
-                downloaded = trafilatura.fetch_url(final_url)
-                if downloaded:
-                    metadata = trafilatura.extract_metadata(downloaded)
-                    if metadata and metadata.image: return metadata.image
-            if final_resp.status_code == 200:
-                soup = BeautifulSoup(final_resp.content, 'html.parser')
-                og_image = soup.find("meta", property="og:image")
-                if og_image and og_image.get("content"): return og_image["content"]
-        except: pass 
+            # 1. Trafilatura (Best for article extraction)
+            downloaded = trafilatura.fetch_url(url)
+            if downloaded:
+                metadata = trafilatura.extract_metadata(downloaded)
+                if metadata and metadata.image: 
+                    return metadata.image
+
+            # 2. Manual Request (Fallback)
+            resp = self.session.get(url, headers=headers, timeout=5, stream=True)
+            if resp.status_code == 200:
+                soup = BeautifulSoup(resp.content, 'html.parser')
+                og = soup.find("meta", property="og:image")
+                if og and og.get("content"): return og["content"]
+                
+                # Twitter Card
+                tw = soup.find("meta", name="twitter:image")
+                if tw and tw.get("content"): return tw["content"]
+                
+        except Exception as e:
+            # print(f"Image fetch failed for {url}: {e}")
+            pass
         return None
 
     def get_news(self, limit=1000):
@@ -189,14 +201,13 @@ class NewsFeeder:
         all_news.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
         # ------------------------------------------------
         
-        # Geo Sort (Optional enhancement) - Apply ONLY to non-priority items?
-        # Or just return the prioritised list. The user wants priority for JR.
-        # If we run geo-sorter, it might shuffle priority items down if they are "Global" vs "Local".
-        # Strategy: Keep Priority items at top, Geo-Sort the rest?
-        # For simplicity and robustness, let's return the prioritised list directly for now, 
-        # as GeoSorter might not be fully tuned for this override.
+        # ------------------------------------------------
         
-        return all_news
+        # GEO-SORTING (Tamil Nadu > India > Global)
+        # Apply strict geo-sorting on the prioritized list
+        sorted_news = self.sorter.sort_results(all_news)
+        
+        return sorted_news
 
     def get_all_news(self):
         """Admin: Fetch ALL news (Approved & Blocked)."""
@@ -276,50 +287,65 @@ class NewsFeeder:
                      'snippet': clean_snippet,
                      'source_type': 'news' 
                  })
-            return results
+            # Sort results
+            return self.sorter.sort_results(results)
         except Exception as e:
             print(f"News Search Error: {e}")
             return []
 
     def get_news_by_language(self, lang, limit=50, topic_query=None):
-        """Fetch localized news with Priority Boosting (Jesus Redeems) and Topic Translation."""
+        """
+        Master Feed: Returns Global + Tamil + Hindi content mixed.
+        Ignores 'lang' param for filtering, uses it only if strictly needed for something else.
+        Sorted by: Tamil Nadu > India > Global.
+        """
         
-        # 1. Boost "Jesus Redeems" by prepending it to query if appropriate
-        ministry_boost = "Jesus Redeems Ministries OR Mohan C Lazarus"
+        # Define the Master Query Set (All languages)
+        searches = [
+            {'lang': 'en', 'q': topic_query if topic_query else "Christian News Global"},
+            {'lang': 'ta', 'q': "Jesus Redeems Ministries OR Mohan C Lazarus OR கிறிஸ்தவ செய்திகள்"},
+            {'lang': 'hi', 'q': "Jesus Redeems Ministries OR ईसाई धर्म भारत समाचार"}
+        ]
         
+        # If specific topic provided, try to translate/apply it to all
         if topic_query:
-            # Topic Translation Map (Naive but effective for core topics)
-            # Add more as needed
-            transl_map = {
-                'en': {"Sports": "Sports", "Christianity": "Christianity", "Science": "Science", "Technology": "Technology", "Business": "Business"},
-                'hi': {"Sports": "खेल", "Christianity": "ईसाई धर्म", "Science": "विज्ञान", "Technology": "प्रौद्योगिकी", "Business": "व्यापार"},
-                'ta': {"Sports": "விளையாட்டு", "Christianity": "கிறிஸ்தவம்", "Science": "அறிவியல்", "Technology": "தொழில்நுட்பம்", "Business": "வர்த்தகம்"},
-                'ml': {"Sports": "കായികം", "Christianity": "ക്രിസ്തുമതം", "Science": "ശാസ്ത്രം"},
-                'te': {"Sports": "క్రీడలు", "Christianity": "క్రైస్తవ మతం", "Science": "సైన్స్"}
+             # Simple approach: Append topic to local queries
+             # (In future, use real translation. For now, trust the English topic or simple mapping)
+             searches[1]['q'] = f"{topic_query} OR கிறிஸ்தவ செய்திகள்"
+             searches[2]['q'] = f"{topic_query} OR ईसाई धर्म भारत समाचार"
+
+        all_results = []
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_search = {
+                executor.submit(self.search, s['q'], limit=20, lang=s['lang']): s 
+                for s in searches
             }
-            
-            # Translate the topic query keywords
-            final_query = topic_query
-            if lang in transl_map:
-                for en_key, local_val in transl_map[lang].items():
-                    final_query = final_query.replace(f'"{en_key}"', f'"{local_val}"') # Replace quoted exact matches
-                    final_query = final_query.replace(en_key, local_val)     # Replace loose matches
-            
-            # [FIX] Always include Ministry Boost regardless of topic being religious or not
-            # because the user requested priority for JRM data everywhere.
-            final_query = f"({final_query}) OR ({ministry_boost})"
+            for future in as_completed(future_to_search):
+                try:
+                    all_results.extend(future.result())
+                except: pass
 
-            return self.search(final_query, limit=limit, lang=lang)
-
-        # Default Regional Queries (No active topics)
-        if lang == 'hi':
-            query = f"({ministry_boost}) OR ईसाई धर्म भारत समाचार" 
-        elif lang == 'ta':
-            query = f"({ministry_boost}) OR கிறிஸ்தவ செய்திகள்"
-        else:
-            query = f"({ministry_boost}) OR Christian News India"
+        # deduplicate
+        unique_results = []
+        seen_urls = set()
+        for r in all_results:
+            if r['url'] not in seen_urls:
+                seen_urls.add(r['url'])
+                unique_results.append(r)
+        
+        # Priority Boost (JRM)
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        
+        def get_priority_score(item):
+            text = (item.get('title', '') + ' ' + item.get('source', '') + ' ' + item.get('snippet', '')).lower()
+            for k in priority_keywords:
+                if k in text: return 2
+            return 1
             
-        results = self.search(query, limit=limit, lang=lang)
+        unique_results.sort(key=lambda x: (get_priority_score(x), x.get('published', '')), reverse=True)
+        
+        # Final Geo-Sort
+        return self.sorter.sort_results(unique_results)
         
         # --- PRIORITY BOOST: Jesus Redeems Ministries (Post-Search Sort) ---
         priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
@@ -333,7 +359,7 @@ class NewsFeeder:
         # Resort results
         results.sort(key=lambda x: (get_priority_score(x), x.get('published', '')), reverse=True)
         
-        return results
+        return self.sorter.sort_results(results)
 
     def _fetch_and_store(self):
         print(f"🔄 [NewsFeeder] Determine Active Topics & Feeds...")

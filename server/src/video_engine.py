@@ -12,6 +12,7 @@ from datetime import datetime
 DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'videos.db')
 
 from src.topic_manager import topic_manager
+from src.geo_sorter import GeoSorter
 
 # Curated Channel Modules
 # "Christianity" Module (Default)
@@ -195,12 +196,24 @@ class VideoEngine:
 
         # 2. Fetch from Topics (Dynamic)
         # Scan active topics and search loosely for them
-        for topic in active_topics or ["Christianity"]:
+        # 2. Fetch from Topics (All Languages)
+        # Scan active topics and search loosely for them in En, Ta, Hi
+        base_topics = active_topics or ["Christianity"]
+        
+        for topic in base_topics:
              try:
-                 query = f"{topic} latest"
-                 videos = scrapetube.get_search(query, limit=5)
-                 processed = self._process_videos(videos, source_tag="Topic")
-                 new_items.extend(processed)
+                 # English
+                 q_en = f"{topic} latest"
+                 new_items.extend(self._process_videos(scrapetube.get_search(q_en, limit=5), f"Topic-En:{topic}"))
+                 
+                 # Tamil
+                 q_ta = f"{topic} youtube tamil"
+                 new_items.extend(self._process_videos(scrapetube.get_search(q_ta, limit=3), f"Topic-Ta:{topic}"))
+                 
+                 # Hindi
+                 q_hi = f"{topic} youtube hindi"
+                 new_items.extend(self._process_videos(scrapetube.get_search(q_hi, limit=3), f"Topic-Hi:{topic}"))
+                 
              except Exception as e:
                  pass
 
@@ -366,7 +379,9 @@ class VideoEngine:
         all_videos.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
         # ------------------------------------------------
         
-        return all_videos
+        # Apply Geo-Sorting
+        sorter = GeoSorter()
+        return sorter.sort_results(all_videos)
 
     def get_all_videos(self):
         """Admin: Fetch all videos."""
@@ -445,37 +460,50 @@ class VideoEngine:
         return results
 
     def get_videos_by_language(self, lang, limit=50, topic_query=None):
-        """Fetch localized videos via Search. If topic_query is active, use it."""
-        if topic_query:
-             # Topic Translation Map
-             transl_map = {
-                 'en': {"Sports": "Sports", "Christianity": "Christianity", "Science": "Science", "Technology": "Technology", "Business": "Business"},
-                 'hi': {"Sports": "खेल", "Christianity": "ईसाई धर्म", "Science": "विज्ञान", "Technology": "प्रौद्योगिकी", "Business": "व्यापार"},
-                 'ta': {"Sports": "விளையாட்டு", "Christianity": "கிறிஸ்தவம்", "Science": "அறிவியல்", "Technology": "தொழில்நுட்பம்", "Business": "வர்த்தகம்"},
-                 'ml': {"Sports": "കായികം", "Christianity": "ക്രിസ്തുമതം", "Science": "ശാസ്ത്രം"},
-                 'te': {"Sports": "క్రీడలు", "Christianity": "క్రైస్తవ మతం", "Science": "సైన్స్"}
-             }
-             
-             final_query = topic_query
-             if lang in transl_map:
-                 for en_key, local_val in transl_map[lang].items():
-                     final_query = final_query.replace(f'"{en_key}"', f'"{local_val}"')
-                     final_query = final_query.replace(en_key, local_val)
-             
-             # [FIX] Always include Ministry Boost regardless of topic
-             ministry_boost = "Jesus Redeems Ministries OR Mohan C Lazarus"
-             final_query = f"({final_query}) OR ({ministry_boost})"
-             
-             return self.search(final_query, limit=limit, lang=lang)
-
-        if lang == 'hi':
-            query = "यीशु मसीह के गीत और संदेश" # Jesus Songs & Messages
-        elif lang == 'ta':
-            query = "தமிழ் கிறிஸ்தவ பாடல்கள்" # Tamil Christian Songs
-        else:
-            query = "Christian Gospel"
+        """Unified Master Video Search: En + Ta + Hi mixed."""
+        
+        searches = [
+            {'lang': 'en', 'q': topic_query if topic_query else "Christian Gospel"},
+            {'lang': 'ta', 'q': f"{topic_query} Tamil" if topic_query else "தமிழ் கிறிஸ்தவ பாடல்கள்"},
+            {'lang': 'hi', 'q': f"{topic_query} Hindi" if topic_query else "यीशु मसीह के गीत और संदेश"}
+        ]
+        
+        all_results = []
+        # Parallel fetch
+        # Note: scrapetube is generator based, so we need to iterate to fetch
+        # We can reuse self.search helper
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+            future_to_search = {
+                executor.submit(self.search, s['q'], limit=20, lang=s['lang']): s 
+                for s in searches
+            }
+            for future in concurrent.futures.as_completed(future_to_search):
+                try:
+                    all_results.extend(future.result())
+                except: pass
+                
+        # Deduplicate
+        unique_results = []
+        seen_ids = set()
+        for r in all_results:
+            if r['id'] not in seen_ids:
+                seen_ids.add(r['id'])
+                unique_results.append(r)
+        
+        # Priority Sort
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        def get_priority_score(item):
+            text = (item.get('title', '') + ' ' + item.get('channel', '')).lower()
+            for k in priority_keywords:
+                 if k in text: return 2
+            return 1
             
-        return self.search(query, limit=limit, lang=lang)
+        unique_results.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
+
+        # Apply Geo-Sorting
+        sorter = GeoSorter()
+        return sorter.sort_results(unique_results)
 
 # Singleton Interface (optional, if needed by api.py import style)
 # engine = VideoEngine() 

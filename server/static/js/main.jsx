@@ -1374,7 +1374,11 @@ const SuperAdminDashboard = () => {
 const DashboardLayout = ({ user, onLogout }) => {
     const [activeTab, setActiveTab] = useState('dashboard');
     const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-    const [lang, setLang] = useState('en');
+    const [lang, setLang] = useState(() => localStorage.getItem('gyanbridge_lang') || 'en');
+
+    useEffect(() => {
+        localStorage.setItem('gyanbridge_lang', lang);
+    }, [lang]);
     const [activeTopics, setActiveTopics] = useState([]);
 
     // Fetch Active Topics

@@ -15,48 +15,65 @@ class EventTrendAnalyzer:
 
     def analyze_trend(self, topic, horizon_days=365*2):
         """
-        LLM-Enhanced Trend Analysis:
-        1. Mines data.
-        2. Uses LLM to extract precise X,Y coordinates (Date, Count).
-        3. Returns time series.
+        LLM-Enhanced Trend Analysis with Deep Web Mining.
         """
-        print(f"📉 Trend Analyzer (LLM): Mining history for '{topic}'...")
+        print(f"📉 Trend Analyzer (LLM): Mining deep history for '{topic}'...")
         
-        # 1. Fetch Deep History - Broader Search Strategy
-        # We need a LOT of text for the LLM to process
-        # Strategy: Broad National Search + Specific Keyword Search
+        # 1. Fetch Deep History - Broader Search Strategy with Query Expansion
         current_year = datetime.now().year
-        # Search for reports from current and past 2 years to get trend data (e.g. 2024, 2025 if now is 2026)
         years_to_scan = [current_year, current_year - 1, current_year - 2]
         
-        results = []
-        for y in years_to_scan:
-            # Broad search for each year
-            query_broad = f"{topic} statistics incidents report {y}" 
-            # Use 'web' instead of 'news' to find persistent reports/PDFs which might not be indexed as recent news
-            results += self.agents.search_ddg(query_broad, 'web', limit=10)
+        # Query Expansion: Search for variations
+        expansions = [
+            f"{topic} statistics {y}",
+            f"{topic} report incidents {y}",
+            f"{topic} documented cases {y}",
+            f"{topic} cumulative data {y}"
+        ]
         
-        # If the topic is "India", ensure we explicitly search for "India wide" or "National" if results are thin or tailored
-        if "india" in topic.lower():
-             # Targeted searches for known data aggregators in this domain
-             for y in years_to_scan:
-                 results += self.agents.search_ddg(f"United Christian Forum violence against christians {y} report", 'web', limit=5)
-                 results += self.agents.search_ddg(f"Evangelical Fellowship of India persecution report {y}", 'web', limit=5)
-                 
-             results += self.agents.search_ddg(f"{topic} national statistics data", 'web', limit=20)
+        results = []
+        # Use concurrent execution for expansion searches to save time
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = []
+            for y in years_to_scan:
+                for eq in expansions:
+                    q = eq.replace("{y}", str(y))
+                    # [OPTIMIZATION] Use higher limit for mining (15 per query branch)
+                    # [NEW] Default to 'wt-wt' for broad stats, 'in-en' if India mentioned
+                    region = 'in-en' if 'india' in topic.lower() else 'wt-wt'
+                    futures.append(executor.submit(self.agents.search_ddg, q, 'web', 15, region=region))
+            
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    results.extend(future.result())
+                except:
+                    pass
+        
+        # [NEW] Targeted domain deep scan if relevant
+        if "india" in topic.lower() or "christian" in topic.lower():
+             specific_queries = [
+                 "United Christian Forum report violence statistics",
+                 "Evangelical Fellowship of India annual persecution data",
+                 "International Christian Concern India report statistics"
+             ]
+             for sq in specific_queries:
+                 results += self.agents.search_ddg(sq, 'web', 10, region='in-en')
 
-        if len(results) < 10:
-             results += self.agents.search_ddg(f"{topic} news", 'news', limit=30, time_filter='m')
+        # deduplicate results by URL
+        unique_results = {r['url']: r for r in results}.values()
+        results = list(unique_results)
+        
+        print(f"📊 Deep Mining: Gathered {len(results)} candidate sources.")
 
         # 2. Build Context for LLM
-        # Concatenate all snippets
         context_lines = []
         for item in results:
             date_str = item.get('published_at', 'Unknown Date')
             text = f"[{date_str}] Title: {item.get('title')} | Snippet: {item.get('snippet')}"
             context_lines.append(text)
             
-        full_context = "\n".join(context_lines[:200]) # Increased context limit slightly
+        # Increased context limit for LLM to 300 snippets (if available)
+        full_context = "\n".join(context_lines[:300]) 
         
         # DEBUG: Print what we're sending to LLM
         print(f"📊 DEBUG: Sending {len(context_lines)} snippets to LLM. First 500 chars:")

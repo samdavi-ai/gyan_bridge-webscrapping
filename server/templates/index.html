@@ -22,6 +22,8 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <!-- Marked for Markdown Rendering -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- LiveKit Client SDK -->
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
     <!-- Icons -->
     <link href="https://cdn.jsdelivr.net/npm/remixicon@3.5.0/fonts/remixicon.css" rel="stylesheet">
     <!-- Custom CSS -->
@@ -38,8 +40,8 @@
 <body class="bg-[#121212] text-white overflow-x-hidden font-['Rajdhani']">
     <div id="root" class="relative z-10 w-full h-full"></div>
 
-    <!-- React App Logic -->
-    <script type="text/babel" src="/static/js/main.jsx"></script>
+    <!-- React App Logic (Modular) -->
+    <script type="text/babel" data-presets="react,env" src="/static/js/AppBundle.jsx"></script>
 </body>
 
 </html>

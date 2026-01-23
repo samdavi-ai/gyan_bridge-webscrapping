@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  gyanbridge:
+    build:
+      context: .
+      dockerfile: docker-compose/Dockerfile
+    container_name: gyanbridge_app
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount the data/db files so persistence works outside container
+      - ./server/news.db:/app/server/news.db
+      - ./server/videos.db:/app/server/videos.db
+      - ./server/data:/app/server/data
+      # Optional: Mount source code for dev
+      # - ./server:/app/server
+    env_file:
+      - ./server/.env
+    environment:
+      - FLASK_ENV=production
+      # Pass through the API key if it's in the host env, or rely on .env file in container (if copied)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    restart: unless-stopped

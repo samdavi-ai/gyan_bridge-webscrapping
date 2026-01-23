@@ -2,7 +2,7 @@ import statistics
 from datetime import datetime, timedelta
 import collections
 import numpy as np
-from sklearn.linear_model import LinearRegression
+# Removed sklearn LinearRegression import; using numpy polyfit
 
 class Predictor:
     """
@@ -54,19 +54,27 @@ class Predictor:
         years = sorted(year_counts.keys())
         counts = [year_counts[y] for y in years]
 
+        if not years:
+            return {
+                'historical': time_series_data,
+                'forecast': [],
+                'stats': {'trend_factor': 1.0, 'volatility': 0, 'r_squared': 0, 'topic': topic_filter}
+            }
+
         X = np.array(years).reshape(-1, 1)
         y = np.array(counts)
 
         # 2. Train Model
-        model = LinearRegression()
+        # Perform linear regression using numpy polyfit
         try:
-            model.fit(X, y)
-            r_sq = model.score(X, y)
-            slope = model.coef_[0]
-            intercept = model.intercept_
-            
-            # Calculate Standard Error
-            preds = model.predict(X)
+            # polyfit returns [slope, intercept]
+            slope, intercept = np.polyfit(X.flatten(), y, 1)
+            # Predictions for R^2 calculation
+            preds = slope * X.flatten() + intercept
+            ss_res = np.sum((y - preds) ** 2)
+            ss_tot = np.sum((y - np.mean(y)) ** 2)
+            r_sq = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
+            # Standard error of residuals
             residuals = y - preds
             std_error = np.std(residuals)
         except Exception as e:
@@ -78,7 +86,7 @@ class Predictor:
 
         # 3. Generate Forecast - YEARLY instead of daily
         current_year = datetime.now().year
-        last_data_year = max(years)
+        last_data_year = max(years) if years else current_year
         
         # Start forecast from next year after last data
         forecast_start_year = max(current_year, last_data_year) + 1
@@ -90,10 +98,7 @@ class Predictor:
         for i in range(forecast_years_count):
             future_year = forecast_start_year + i
             
-            try:
-                prediction = model.predict([[future_year]])[0]
-            except:
-                prediction = intercept
+            prediction = slope * future_year + intercept
                 
             prediction = max(0, prediction)  # No negative events
             

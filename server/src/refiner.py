@@ -1,5 +1,14 @@
 import os
+import sys
 from langchain_openai import ChatOpenAI
+
+# Fix Unicode encoding for Windows console
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass  # Fallback if reconfigure fails
 
 class QueryRefiner:
     """
@@ -12,7 +21,7 @@ class QueryRefiner:
     def __init__(self):
         try:
             self.llm = ChatOpenAI(
-                model="gpt-4-turbo-preview", 
+                model="gpt-3.5-turbo", 
                 temperature=0.3
             )
             print("🧠 QueryRefiner: OpenAI GPT Connected.")
@@ -23,25 +32,21 @@ class QueryRefiner:
     def refine(self, topic):
         """
         Input: 'music schools'
-        Output: 'Christian gospel music schools and worship training centers'
+        Output: 'Best music schools and training programs' (Balanced)
         """
-        # 1. Fallback (Rule-Based) - Simple & Effective
-        # Ensure we don't repeat "Christian" if user already typed it
+        # 1. Fallback (Rule-Based) - Keep it raw if simple
         base = topic.strip()
-        if "christian" not in base.lower() and "church" not in base.lower() and "jesus" not in base.lower():
-            refined_fallback = f"Christian {base}"
-        else:
-            refined_fallback = base
+        refined_fallback = base
             
-        # 2. AI Refinement
+        # 2. AI Refinement (More balanced for general internet search)
         if self.llm:
             try:
-                # Optimized Prompt
+                # Optimized Balanced Prompt
                 prompt = f"""
-                Act as a Helpful Christian Search Assistant.
-                Rewrite the user's search topic to specifically target Christian, Faith-Based, and Church-related resources.
-                Ensure the query is broad enough to catch 'Gospel', 'Worship', 'Ministry', and 'Theology' aspects.
-                Do NOT add location unless specified. 
+                Act as a Search Optimization Specialist.
+                Refine the user's search topic to be more effective for a web search engine.
+                Improve the query to get comprehensive, diverse, and high-quality results from across the entire internet.
+                Avoid being overly restrictive or biased unless the original topic clearly specifies a niche.
                 Output ONLY the refined query text, no quotes.
                 
                 Topic: "{topic}"
@@ -57,5 +62,4 @@ class QueryRefiner:
                 return refined_fallback
 
         # Return fallback if no AI
-        print(f"🔧 Fallback Refined: '{topic}' -> '{refined_fallback}'")
         return refined_fallback

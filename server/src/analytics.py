@@ -8,8 +8,14 @@ class AnalyticsEngine:
     Tracks 'Real' metrics: Internal View Counts (Community Views).
     Stores data in a local JSON file.
     """
-    def __init__(self, db_path='data/analytics.json'):
-        self.db_path = db_path
+    def __init__(self, db_path=None):
+        if db_path is None:
+            # Resolve absolute path relative to this file's parent (server/src/..) -> server/data
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.db_path = os.path.join(base_dir, 'data', 'analytics.json')
+        else:
+            self.db_path = db_path
+            
         self.data = self._load_db()
 
     def _load_db(self):

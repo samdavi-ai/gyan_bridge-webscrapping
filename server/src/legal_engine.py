@@ -2,6 +2,7 @@ import os
 import json
 from openai import OpenAI
 from src.searcher import DiscoveryEngine
+from src.translator import ContentTranslator
 
 class LegalAssistant:
     def __init__(self):
@@ -10,6 +11,7 @@ class LegalAssistant:
              print("⚠️ No OPENAI_API_KEY found. Legal Assistant may fail.")
         self.client = OpenAI(api_key=self.api_key)
         self.searcher = DiscoveryEngine()
+        self.translator = ContentTranslator(api_key=self.api_key)
         
     def _filter_relevant_news(self, items):
         """
@@ -103,18 +105,35 @@ class LegalAssistant:
         """
         print(f"⚖️ Legal Assistant: Analyzing '{query}' (Lang: {lang})...")
         
-        # 1. Search for Acts and Statutes
-        acts_hits = self._search_acts(query)
+        # [NEW] Translate Query to English for better Search Results
+        english_query = query
+        if lang != 'en':
+            english_query = self.translator.translate_text(query, 'en')
+            print(f"   -> Translated Query: '{english_query}'")
+
+        # [STRICT TOPIC CONTROL]
+        from src.topic_manager import topic_manager
+        active_topics = topic_manager.get_active_keywords()
+        if active_topics:
+             topic_constraint = " AND (" + " OR ".join([f'"{t}"' for t in active_topics]) + ")"
+             # Prevent double strictness if user already typed it
+             if not any(t.lower() in english_query.lower() for t in active_topics):
+                 english_query += topic_constraint
+                 print(f"🔒 [LegalAssistant] Strict Topic applied: {english_query}")
+
+        # 1. Search for Acts and Statutes (Use English Query)
+        acts_hits = self._search_acts(english_query)
         
-        # 2. Search for Procedures
-        proc_hits = self._search_procedures(query)
+        # 2. Search for Procedures (Use English Query)
+        proc_hits = self._search_procedures(english_query)
         
         # 3. Search for Related News (Christian legal news)
         # [FIX] More specific query to avoid generic results like "C-DAC"
-        news_query = f"{query} (court OR law OR rights OR persecution) India news"
+        news_query = f"{english_query} (court OR law OR rights OR persecution) India news"
         
         # [FIX] Force Indian region and fetch more to allow filtering
-        raw_news = self.searcher.search_web(news_query, max_results=10, region='in-en')
+        # [NEW] Default to 'in-en' to avoid foreign legal results
+        raw_news = self.searcher.search_web(news_query, max_results=15, region='in-en')
         
         # [FIX] Apply strict keyword filter
         news_hits = self._filter_relevant_news(raw_news)[:5]
@@ -133,21 +152,49 @@ class LegalAssistant:
         # 5. LLM Synthesis
         lang_map = {'ta': 'Tamil', 'hi': 'Hindi', 'en': 'English', 'ml': 'Malayalam', 'te': 'Telugu'}
         full_lang = lang_map.get(lang.lower(), lang).upper()
-        target_lang_instruction = f"IMPORTANT: Respond in {full_lang} Language (Script)." if lang != 'en' else ""
+        target_lang_instruction = ""
+        if lang != 'en':
+            target_lang_instruction = f"""
+            CRITICAL INSTRUCTION: The user has selected {full_lang}.
+            1. You MUST respond ENTIRELY in {full_lang} script.
+            2. Translate ALL headers (like 'Legal Basis', 'Procedure') into {full_lang}.
+            3. Do NOT use English script for the main response.
+            """
         
-        system_prompt = f"""You are an expert Indian Legal Assistant specializing in Constitutional Rights with a focus on Christian Minority contexts.
-        Your goal is to provide a clear, actionable guide based strictly on the provided context.
+        # Integrate Super Admin Topics
+        from src.topic_manager import topic_manager
+        active_topics = topic_manager.get_active_keywords()
+        topic_context = ""
+        if active_topics:
+            topic_str = ", ".join(active_topics)
+            topic_context = f"\nSuper Admin Controlled Topics: {topic_str}. Focusing on strict legal interpretation related to these areas."
+
+        system_prompt = f"""You are an Expert Indian Legal Assistant. 
+        Focus: Indian Constitutional Rights, Christianity, Minorities.
+        {topic_context}
+
+        CRITICAL LANGUAGE INSTRUCTION:
+        The user has selected: {full_lang}.
+        1. You MUST generate your ENTIRE response in {full_lang} script.
+        2. Do NOT use English script if the target is {full_lang}.
+        3. Translate ALL legal terms, headers, and explanations into {full_lang}.
         
-        {target_lang_instruction}
+        Structure your answer in {full_lang} using CLEAR NUMBERED LISTS:
         
-        Structure your answer in Markdown:
-        1. **Legal Basis**: Cite the specific Acts, Sections, or Articles found in the context (High Priority).
-        2. **Procedure**: Step-by-step practical guide.
-        3. **Documents Required**: Bulleted list.
-        4. **Important Notes**: Key considerations and warnings.
+        **1. Step-by-Step Procedure**
+        (Provide a detailed 1, 2, 3... list of actions the user must take)
         
-        If the context is insufficient, state clearly what is known and what is missing. Do not invent laws.
-        Always end with: "⚠️ This is for informational purposes only and not professional legal advice."
+        **2. Legal Basis**
+        (Cite specific Acts/Sections)
+        
+        **3. Documents Required**
+        (Bulleted list of documents)
+        
+        **4. Important Notes**
+        (Warnings or additional context)
+        
+        If context is insufficient, state clearly what is known.
+        Always end with a disclaimer in {full_lang}.
         """
         
         try:
@@ -161,8 +208,24 @@ class LegalAssistant:
             )
             answer = response.choices[0].message.content
         except Exception as e:
-            print(f"❌ LLM Error: {e}")
-            answer = "I'm sorry, I encountered an error while synthesizing the legal data. Please try again later."
+            # Fallback to GPT-3.5 if GPT-4o fails (common API key issue)
+            print(f"⚠️ GPT-4o Failed: {e}. Falling back to GPT-3.5-turbo...")
+            with open("debug_legal.log", "a") as f: f.write(f"GPT-4o Error: {str(e)}\n")
+            
+            try:
+                response = self.client.chat.completions.create(
+                    model="gpt-3.5-turbo", 
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": f"User Query: {query}\n\nContext Found:\n{context_str}"}
+                    ],
+                    temperature=0.2
+                )
+                answer = response.choices[0].message.content
+            except Exception as e2:
+                print(f"❌ LLM Error (Fallback): {e2}")
+                with open("debug_legal.log", "a") as f: f.write(f"GPT-3.5 Error: {str(e2)}\n")
+                answer = "I'm sorry, I encountered an error while synthesizing the legal data. Please check your API Quota or connection."
             
         return {
             "answer": answer,
@@ -171,3 +234,38 @@ class LegalAssistant:
             "news": [{"title": item['title'], "url": item['url'], "snippet": item.get('metadata', {}).get('snippet', '')[:200]} for item in news_hits],
             "sources": acts_hits + proc_hits
         }
+
+    def speak(self, text, lang='en'):
+        """
+        Synthesizes text to speech using OpenAI's high-quality TTS model.
+        Supports multiple languages: English (en), Hindi (hi), Tamil (ta).
+        Returns the binary audio data.
+        """
+        try:
+            # Map language to appropriate voice (OpenAI TTS supports multiple voices)
+            # Note: OpenAI TTS doesn't directly support language parameter,
+            # but we can use different voices for better pronunciation
+            voice_map = {
+                'en': 'alloy',  # Neutral English voice
+                'hi': 'nova',   # Clear voice for Hindi
+                'ta': 'echo',   # Clear voice for Tamil
+            }
+            
+            # Select voice based on language
+            voice = voice_map.get(lang, 'alloy')
+            
+            # For non-English, ensure text is properly formatted
+            # (Translation should already be done, but we ensure it's clean)
+            clean_text = text.strip()
+            
+            print(f"🔊 [Legal TTS] Generating speech for {lang} language (voice: {voice})")
+            
+            response = self.client.audio.speech.create(
+                model="tts-1",
+                voice=voice,
+                input=clean_text
+            )
+            return response.content
+        except Exception as e:
+            print(f"❌ TTS Error: {e}")
+            return None

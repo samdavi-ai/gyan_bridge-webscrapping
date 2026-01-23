@@ -1,19 +1,30 @@
 import os
 import chromadb
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 import uuid
 from .utils import retry_with_backoff
 
 class RAGEngine:
-    def __init__(self, persist_directory="data/chroma_db"):
-        self.persist_directory = persist_directory
+    def __init__(self, persist_directory=None):
+        if persist_directory is None:
+            # Resolve to server/data/chroma_db
+            base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            self.persist_directory = os.path.join(base_dir, 'data', 'chroma_db')
+        else:
+            self.persist_directory = persist_directory
+
         # Ensure persist directory exists
-        if not os.path.exists(persist_directory):
-            os.makedirs(persist_directory)
+        if not os.path.exists(self.persist_directory):
+            os.makedirs(self.persist_directory)
             
         # Switch to Local Embeddings (Reliable & Free & Fixed Env)
-        self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+        try:
+            self.embeddings = HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")
+            print("✅ RAG: Embeddings model loaded successfully.")
+        except Exception as e:
+            print(f"⚠️ RAG: Embeddings model failed to load. RAG features will be disabled. Error: {e}")
+            self.embeddings = None
         
         # Initialize Chroma Client
         self.client = chromadb.PersistentClient(path=persist_directory)
@@ -37,11 +48,15 @@ class RAGEngine:
         metadatas = [metadata or {} for _ in chunks]
         
         # Embed chunks
-        # embeddings = self.embeddings.embed_documents(chunks) 
-        # Optimization: Chroma can compute embeddings if we setup an embedding function, 
-        # but manual embedding gives us control if using Langchain wrapper.
-        # Let's do manual embedding here to be safe with the wrapper.
-        embeddings = self.embeddings.embed_documents(chunks)
+        if not self.embeddings:
+             print("⚠️ RAG: Embeddings disabled, skipping ingestion.")
+             return 0
+
+        try:
+            embeddings = self.embeddings.embed_documents(chunks)
+        except Exception as e:
+            print(f"❌ RAG Embedding Error: {e}")
+            return 0
         
         self.collection.add(
             documents=chunks,
@@ -56,7 +71,7 @@ class RAGEngine:
         """
         Retrieves relevant documents.
         """
-        if not query:
+        if not query or not self.embeddings:
             return []
 
         query_embedding = self.embeddings.embed_query(query)
@@ -90,7 +105,7 @@ class RAGEngine:
         hybrid_results.extend(db_results)
         
         # 2. Live/Online Search (In-Memory Vectorization)
-        if live_texts and query:
+        if live_texts and query and self.embeddings:
             try:
                 # Embed query
                 query_vec = self.embeddings.embed_query(query)

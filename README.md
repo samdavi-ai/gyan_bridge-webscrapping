@@ -76,88 +76,41 @@ This is the main Flask application that powers the entire Nebula system. It:
 
 ## 5. How to Run (Windows Guide)
 
-### Prerequisites
-- Python 3.8 or higher installed
-- Git (optional, for cloning)
+### 🚀 Standard Mode (Start Everything)
+Since the frontend is now integrated into the backend, you only need to run the server!
 
-### Step 1: Navigate to Project Directory
-Open PowerShell or Command Prompt and navigate to the project root:
-```powershell
-cd d:\GB_web_scraber
-```
+1. **Navigate to Server Directory**:
+   ```powershell
+   cd d:\GB_web_scraber\server
+   ```
+2. **Activate Virtual Environment**:
+   ```powershell
+   ..\.venv\Scripts\Activate
+   ```
+3. **Run the App**:
+   ```powershell
+   python api.py
+   ```
+   *Open `http://localhost:5001` in your browser. The full UI and Backend are running here.*
 
-### Step 2: Create and Activate Virtual Environment
-**Critical**: Ensure you are using a clean environment. If you have opened a terminal before, close it and open a new one.
+---
 
-**Option A: PowerShell (Recommended)**
-```powershell
-# 1. Create environment
-python -m venv venv
+### 🛠️ Developer Mode (Hot Reload)
+If you want to edit the React UI and see changes instantly:
 
-# 2. Activate it
-.\venv\Scripts\Activate
+1. **Run Backend** (Terminal 1):
+   ```powershell
+   cd server
+   ..\.venv\Scripts\Activate
+   python api.py
+   ```
 
-# 3. VERIFY activation
-# You should see (venv) at the start of your line.
-# Run this to confirm you are using the venv python:
-Get-Command python
-# Output should end with: ...\venv\Scripts\python.exe
-```
-
-**Option B: Command Prompt (cmd.exe)**
-```cmd
-python -m venv venv
-venv\Scripts\activate.bat
-where python
-```
-
-### Step 3: Install Dependencies
-Ensure you see `(venv)` in your terminal before running this:
-```bash
-pip install -r server/requirements.txt
-```
-*If you see "Requirement already satisfied", verify you're in the correct virtual environment!*
-
-### Step 4: Configure Environment Variables
-Create a `.env` file in the `server/` directory with your API keys:
-```env
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-**Note:** The application uses OpenAI's GPT models for analytics:
-- **Primary Model:** GPT-4 Turbo (for high-quality analysis)
-- **Fallback Model:** GPT-3.5 Turbo (for speed and cost optimization)
-
-### Step 5: Launch the Application
-Navigate to the server directory and run the main file:
-```bash
-cd server
-python api.py
-```
-
-**Or from the project root:**
-```bash
-python server/api.py
-```
-
-The application will start on **[http://localhost:5000](http://localhost:5000)**
-
-You should see output similar to:
-```
- * Running on http://0.0.0.0:5000
- * Debug mode: on
-```
-
-Open your browser and navigate to `http://localhost:5000` to access the Nebula interface.
-
-### 🔧 Troubleshooting
-**Error: `ModuleNotFoundError: No module named 'flask'`**
-*   **Cause**: You installed dependencies in one environment (e.g., global or `.venv`) but are trying to run in another (e.g., `venv`).
-*   **Fix**:
-    1.  Close your terminal.
-    2.  Open a new terminal in `d:\GB_web_scraber`.
-    3.  Run `.\venv\Scripts\Activate`.
-    4.  Run `python server/api.py`.
+2. **Run Frontend** (Terminal 2):
+   ```powershell
+   cd client
+   npm run dev
+   ```
+   *Open `http://localhost:3000`. Changes to React files will update instantly.*
 
 
 ---
@@ -175,3 +128,10 @@ Nebula now features **"Antigravity Analytics"**, a RAG-powered engine that lets 
 *   **RAG Engine**: Retrieves cached articles using HuggingFace embeddings (all-MiniLM-L6-v2 model).
 *   **LLM Synthesis**: OpenAI GPT-4 Turbo analyzes the data with high accuracy, falling back to GPT-3.5 Turbo for speed.
 *   **Auto-Retry**: Robust handling of API rate limits ensures stability.
+
+
+
+
+
+taskkill /F /IM python.exe /T
+taskkill /F /IM node.exe /T

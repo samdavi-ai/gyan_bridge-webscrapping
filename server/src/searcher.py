@@ -92,9 +92,10 @@ class DiscoveryEngine:
         except:
             return url
 
-    def discover(self, topic, max_results=50):
+    def discover(self, topic, max_results=150, include_trusted=True):
         """
         Orchestrates discovery across all supported platforms.
+        Increased limits for comprehensive internet-wide search.
         Returns a list of dicts: {'url', 'source_type', 'title', 'metadata'}
         """
         results = []
@@ -116,9 +117,10 @@ class DiscoveryEngine:
         social_results = self.search_social(topic, max_results=max_results // 5)
         results.extend(social_results)
 
-        # 5. Search Trusted Christian Sources (Deep Scan)
-        trusted_results = self.search_trusted_sources(topic, max_results=max_results // 2)
-        results.extend(trusted_results)
+        # 5. Search Trusted Sources (Optional Deep Scan)
+        if include_trusted:
+            trusted_results = self.search_trusted_sources(topic, max_results=max_results // 2)
+            results.extend(trusted_results)
 
         # Deduplicate by URL
         unique_results = []
@@ -133,86 +135,123 @@ class DiscoveryEngine:
 
     def _is_valid_content(self, text):
         """
-        Checks if text contains Chinese characters or other unwanted scripts.
+        Checks if text contains non-Latin scripts.
+        DEPRECATED: Use search_utils.detect_non_latin_script instead.
         """
-        if not text: return True
-        # Check for Chinese characters
-        for char in text:
-            if '\u4e00' <= char <= '\u9fff':
-                return False
-        return True
-
-    def search_web(self, topic, max_results=20, region='wt-wt', include_news=True):
+        from src.search_utils import detect_non_latin_script
+        if not text:
+            return True
+        return not detect_non_latin_script(text)
+    def search_web(self, topic, max_results=50, region='wt-wt', include_news=True):
+        """Web search with timeout, validation, and error handling. Increased limits for better coverage."""
+        from src.search_utils import sanitize_query, validate_url, detect_non_latin_script
+        
         items = []
+        
+        # Validate and sanitize
+        if not topic or not isinstance(topic, str):
+            return items
+        
+        topic = sanitize_query(topic)
+        if not topic:
+            return items
+        
         print(f"  🔍 Querying Web & News ({region})...")
         try:
             with DDGS() as ddgs:
                 # General Search
                 gen_results = ddgs.text(topic, region=region, max_results=max_results)
                 for r in gen_results:
-                    # [FIX] Filter out Chinese content
-                    if not self._is_valid_content(r['title']) or not self._is_valid_content(r['body']):
+                    title = r.get('title', '')
+                    body = r.get('body', '')
+                    url = r.get('href', '')
+                    
+                    # Filter non-Latin content
+                    if detect_non_latin_script(title) or detect_non_latin_script(body):
+                        continue
+                    
+                    if not validate_url(url):
                         continue
                         
                     items.append({
-                        'url': r['href'],
-                        'title': r['title'],
+                        'url': url,
+                        'title': title,
                         'source_type': 'web',
-                        'metadata': {'snippet': r['body']}
+                        'metadata': {'snippet': body}
                     })
                 
-                # News Search - Force Freshness
-                # Only if requested (skip for direct site searches)
+                # News Search
                 if include_news:
-                    # Adding "latest" to topic sometimes helps DDG's algorithm
                     news_topic = f"{topic} latest"
                     news_results = ddgs.news(news_topic, region=region, max_results=max_results // 2)
                     for r in news_results:
-                        # [FIX] Filter out Chinese content
-                        if not self._is_valid_content(r['title']):
+                        title = r.get('title', '')
+                        url = r.get('url', '')
+                        
+                        if detect_non_latin_script(title):
+                            continue
+                        
+                        if not validate_url(url):
                             continue
 
                         items.append({
-                            'url': r['url'],
-                            'title': r['title'],
+                            'url': url,
+                            'title': title,
                             'source_type': 'news',
                             'metadata': {'date': r.get('date'), 'source': r.get('source')}
                         })
         except Exception as e:
-            print(f"  ❌ Web Search Error: {e}")
+            print(f"  ❌ Web Search Error: {str(e)[:100]}")
         return items
 
     def search_youtube(self, topic, max_results=10, timelimit=None):
         """
-        Finds YouTube videos. 
-        Note: Using DDGS video search as a proxy since we don't have a YouTube Data API key.
+        YouTube video search with validation and timeout.
         """
+        from src.search_utils import sanitize_query, validate_url, detect_non_latin_script
+        
         items = []
+        
+        # Validate input
+        if not topic:
+            return items
+        
+        topic = sanitize_query(topic)
+        
         print(f"  🎥 Querying YouTube ({timelimit if timelimit else 'all'})...")
         try:
             with DDGS() as ddgs:
-                # [FIX] Pass timelimit to ddgs.videos (e.g., 'm' for month)
-                results = ddgs.videos(topic, region='wt-wt', max_results=max_results, timelimit=timelimit)
+                results = ddgs.videos(
+                    topic, 
+                    region='wt-wt', 
+                    max_results=max_results, 
+                    timelimit=timelimit
+                )
+                
                 for r in results:
-                    # [FIX] Filter out Chinese content
-                    if not self._is_valid_content(r.get('title')):
+                    title = r.get('title', '')
+                    
+                    # Filter non-Latin content
+                    if detect_non_latin_script(title):
                         continue
                         
-                    # r usually has 'content' url or similar
-                    url = r.get('content') or r.get('embed_url') # check structure
-                    # Fallback to reconstructing if we have ID. 
-                    # DDGS videos return a dict with 'content' (link) typically.
-                    if url and "youtube.com" in url or "youtu.be" in url:
-                        items.append({
-                            'url': url,
-                            'title': r.get('title', 'Video'),
-                            'source_type': 'video',
-                            'metadata': {'duration': r.get('duration'), 'views': r.get('statistics',{}).get('viewCount')}
-                        })
+                    url = r.get('content') or r.get('embed_url')
+                    
+                    if url and ("youtube.com" in url or "youtu.be" in url):
+                        if validate_url(url):
+                            items.append({
+                                'url': url,
+                                'title': title,
+                                'source_type': 'video',
+                                'metadata': {
+                                    'duration': r.get('duration'), 
+                                    'views': r.get('statistics', {}).get('viewCount')
+                                }
+                            })
+                            
         except Exception as e:
-             # Fallback: simple web search for youtube.com
-             print(f"  ❌ YouTube Search Error: {e}")
-             pass
+            print(f"  ❌ YouTube Search Error: {str(e)[:100]}")
+            
         return items
 
     def search_arxiv_papers(self, topic, max_results=5):

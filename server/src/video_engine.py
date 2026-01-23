@@ -6,6 +6,7 @@ import json
 import os
 import difflib
 import random
+import concurrent.futures
 from datetime import datetime
 
 # Database File Path
@@ -34,37 +35,78 @@ CHRISTIAN_CHANNELS = [
 
 # "Technology" Module
 TECH_CHANNELS = [
-    "mkbhd",             # MKBHD
-    "veritasium",        # Veritasium
-    "LinusTechTips",     # Linus Tech Tips
-    "TED",               # TED
-    "mrwhosetheboss"     # MrWhoseTheBoss
+    "mkbhd",                 # MKBHD
+    "veritasium",            # Veritasium
+    "LinusTechTips",         # Linus Tech Tips
+    "TED",                   # TED
+    "mrwhosetheboss",        # MrWhoseTheboss
+    "UnboxTherapy",          # Unbox Therapy
+    "MarquesBrownleeClips",  # MKBHD Clips
+    "TechLinked",            # Tech Linked (LTT)
+    "ColdFusion",            # ColdFusion
+    "Dave2D",                # Dave Lee
+    "JerryRigEverything",    # Durability tests
+    "Computerphile",         # Computer science
+    "TwoMinutePapers",       # AI & research
+    "Fireship",              # Dev & tech humor
+    "AndroidAuthority"       # Android tech
 ]
 
 # "Science" Module
 SCIENCE_CHANNELS = [
-    "Kurzgesagt",        # Kurzgesagt
-    "scishow",           # SciShow
-    "smartereveryday",   # Smarter Every Day
-    "nasa",              # NASA
-    "NationalGeographic" # Nat Geo
+    "Kurzgesagt",            # Kurzgesagt
+    "scishow",               # SciShow
+    "smartereveryday",       # Smarter Every Day
+    "nasa",                  # NASA
+    "NationalGeographic",    # Nat Geo
+    "VergeScience",          # Verge Science
+    "PBSspaceTime",          # Space & physics
+    "AsapSCIENCE",           # Asap Science
+    "minutephysics",         # Minute Physics
+    "SciShowSpace",          # Space science
+    "PracticalEngineering",  # Engineering concepts
+    "Seeker",                # Science + future
+    "PhysicsGirl",           # Physics explained
+    "DeepLook",              # Microscopic science
+    "RealEngineering"        # Engineering stories
 ]
 
 # "Sports" Module
 SPORTS_CHANNELS = [
-    "ESPN",              # ESPN
-    "NBA",               # NBA
-    "ICC",               # ICC Cricket
-    "olympics",          # Olympics
-    "FIFA"               # FIFA
+    "ESPN",                  # ESPN
+    "NBA",                   # NBA
+    "ICC",                   # ICC Cricket
+    "olympics",              # Olympics
+    "FIFA",                  # FIFA
+    "SkySports",             # Sky Sports
+    "FoxSports",             # Fox Sports
+    "BTsport",               # BT Sport
+    "NFL",                   # NFL
+    "UFC",                   # UFC
+    "Formula1",              # Formula 1
+    "MotoGP",                # MotoGP
+    "SonySportsNetwork",     # Indian sports
+    "StarSports",            # Star Sports
+    "CricketAustralia"       # Cricket Australia
 ]
 
 # "Global News" Module
 NEWS_CHANNELS = [
-    "BBCNews",           # BBC
-    "AlJazeeraEnglish",  # Al Jazeera
-    "DWNews",            # DW News
-    "CNN"                # CNN
+    "BBCNews",               # BBC
+    "AlJazeeraEnglish",      # Al Jazeera
+    "DWNews",                # DW News
+    "CNN",                   # CNN
+    "Reuters",               # Reuters
+    "AP",                    # Associated Press
+    "SkyNews",               # Sky News
+    "France24English",       # France 24
+    "WION",                  # WION India
+    "ABCNews",               # ABC News
+    "NBCNews",               # NBC News
+    "CBSNews",               # CBS News
+    "Euronews",              # Euro News
+    "UN",                    # United Nations
+    "TheEconomist"           # The Economist
 ]
 
 # Map Topic Keys (from Super Admin) to Channel Lists
@@ -91,11 +133,14 @@ class VideoEngine:
     def __init__(self):
         self._init_db()
         self.stop_event = threading.Event()
+        self.cleanup_irrelevant_videos() # [Fix] Clean on startup
 
     def _init_db(self):
         """Initialize the SQLite database. Creates if not exists."""
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=30.0, check_same_thread=False)
         c = conn.cursor()
+        # [CRITICAL] Enable WAL mode
+        c.execute('PRAGMA journal_mode=WAL;')
         c.execute('''
             CREATE TABLE IF NOT EXISTS videos (
                 id TEXT PRIMARY KEY,
@@ -128,6 +173,69 @@ class VideoEngine:
         """Starts the background thread."""
         threading.Thread(target=self._update_loop, daemon=True).start()
 
+    def force_update(self):
+        """Manual update trigger."""
+        print("🔄 [VideoEngine] Force update triggered...")
+        self.cleanup_irrelevant_videos()
+        self._fetch_cycle()
+
+    def cleanup_irrelevant_videos(self):
+        """Strictly remove videos that don't match active topics (except JRM)."""
+        active_topics = topic_manager.get_active_keywords()
+        if not active_topics: return # If no strict control, leave as is (or default cleanup)
+        
+        print(f"🧹 [VideoEngine] Cleaning videos not matching: {active_topics}")
+        try:
+            conn = sqlite3.connect(DB_FILE, timeout=30.0, check_same_thread=False)
+            c = conn.cursor()
+            
+            # Simple retrieval to filter in python (easier than complex SQL LIKEs)
+            c.execute("SELECT id, title, channel FROM videos") 
+            
+            rows = c.fetchall()
+            ids_to_delete = []
+            
+            priority_keywords = ['jesus redeems', 'mohan c lazarus', 'jrm']
+            # Re-use topic keywords logic or just strict topic match?
+            # User wants strict control.
+            
+            for r in rows:
+                vid, title, channel = r[0], r[1], r[2] 
+                text = (title + ' ' + channel).lower()
+                
+                # SAVE JRM
+                if any(k in text for k in priority_keywords):
+                    continue
+                    
+                # Check match
+                matched = False
+                for t in active_topics:
+                    if t.lower() in text:
+                        matched = True
+                        break
+                
+                # Also check common christian terms if Christianity is active
+                if not matched and "Christianity" in active_topics:
+                     christian_terms = ['church', 'jesus', 'christ', 'gospel', 'worship', 'pastor', 'bible']
+                     if any(ct in text for ct in christian_terms):
+                         matched = True
+                
+                if not matched:
+                    ids_to_delete.append(vid)
+            
+            if ids_to_delete:
+                print(f"🧹 [VideoEngine] Deleting {len(ids_to_delete)} irrelevant videos...")
+                # Chunk deletions
+                for i in range(0, len(ids_to_delete), 50):
+                    batch = ids_to_delete[i:i+50]
+                    placeholders = ','.join('?' * len(batch))
+                    c.execute(f"DELETE FROM videos WHERE id IN ({placeholders})", batch)
+                conn.commit()
+            
+            conn.close()
+        except Exception as e:
+            print(f"⚠️ [VideoEngine] Cleanup error: {e}")
+
     def _update_loop(self):
         """Main loop: Updates videos every 45 minutes."""
         # Initial wait to let server start up
@@ -137,14 +245,17 @@ class VideoEngine:
         if not self.get_all_videos():
              print("🔄 [VideoEngine] DB Empty. Triggering initial fetch...")
              self._fetch_cycle()
+        else:
+             print("✅ [VideoEngine] DB Populated. Waiting for next schedule.")
         
         while not self.stop_event.is_set():
             time.sleep(45 * 60) # 45 minutes
             print("🔄 [VideoEngine] Starting scheduled update cycle...")
+            self.cleanup_irrelevant_videos() # Ensure clean slate before/after
             self._fetch_cycle()
 
     def _fetch_cycle(self):
-        """Orchestrates the fetching from Channels and Topics."""
+        """Orchestrates the fetching from Channels and Topics with Multilingual support."""
         new_items = []
         
         # 1. Determine Active Channels based on Super Admin Topics
@@ -156,19 +267,12 @@ class VideoEngine:
                 if topic in TOPIC_CHANNEL_MAP:
                     target_channels.update(TOPIC_CHANNEL_MAP[topic])
         
-        # Fallback ONLY if absolutely no topics selected (safety net)
-        # But strictly, if user disables everything, they get nothing.
-        # Let's add Christianity by default if list is empty to prevent empty DB?
-        # User said "Super Admin chooses". So if they chose nothing, they get nothing.
-        # But let's assume they want Christianity if nothing else is configured?
-        # Let's trust the map.
-        
+        # Fallback to Christianity if nothing or explicit
         if not target_channels and not active_topics:
              print("⚠️ [VideoEngine] No topics active. Defaulting to Christianity.")
              target_channels.update(CHRISTIAN_CHANNELS)
             
-        # [FIX] ALWAYS fetch Priority Channels (Jesus Redeems) regardless of topic
-        # This ensures JRM content is always available for the prioritization logic
+        # [FIX] ALWAYS fetch Priority Channels (Jesus Redeems)
         priority_channels = ["jesusredeems"] 
         target_channels.update(priority_channels)
 
@@ -178,7 +282,6 @@ class VideoEngine:
         for channel in target_channels:
             try:
                 # [ENHANCED] Try channel fetch, fallback to search if channel blocked/failing
-                videos = None
                 try:
                     videos = scrapetube.get_channel(channel_username=channel, limit=3)
                     processed = self._process_videos(videos, source_tag="Channel")
@@ -186,36 +289,24 @@ class VideoEngine:
                     new_items.extend(processed)
                 except Exception:
                     # Fallback to search for the channel name
-                    # print(f"⚠️ [VideoEngine] Channel fetch failed for '{channel}'. Falling back to search...")
                     search_query = channel if channel != "jesusredeems" else "Jesus Redeems Ministries"
                     videos = scrapetube.get_search(search_query, limit=3)
                     processed = self._process_videos(videos, source_tag="ChannelFallback")
                     new_items.extend(processed)
-            except Exception as e:
-                pass
+            except Exception: pass
+            time.sleep(1.0) # Be polite
 
-        # 2. Fetch from Topics (Dynamic)
-        # Scan active topics and search loosely for them
-        # 2. Fetch from Topics (All Languages)
-        # Scan active topics and search loosely for them in En, Ta, Hi
+        # 2. Fetch from Topics (Multilingual: En, Ta, Hi)
         base_topics = active_topics or ["Christianity"]
-        
         for topic in base_topics:
              try:
                  # English
-                 q_en = f"{topic} latest"
-                 new_items.extend(self._process_videos(scrapetube.get_search(q_en, limit=5), f"Topic-En:{topic}"))
-                 
+                 new_items.extend(self._process_videos(scrapetube.get_search(f"{topic} latest", limit=5), f"Topic-En:{topic}"))
                  # Tamil
-                 q_ta = f"{topic} youtube tamil"
-                 new_items.extend(self._process_videos(scrapetube.get_search(q_ta, limit=3), f"Topic-Ta:{topic}"))
-                 
+                 new_items.extend(self._process_videos(scrapetube.get_search(f"{topic} Tamil", limit=3), f"Topic-Ta:{topic}"))
                  # Hindi
-                 q_hi = f"{topic} youtube hindi"
-                 new_items.extend(self._process_videos(scrapetube.get_search(q_hi, limit=3), f"Topic-Hi:{topic}"))
-                 
-             except Exception as e:
-                 pass
+                 new_items.extend(self._process_videos(scrapetube.get_search(f"{topic} Hindi", limit=3), f"Topic-Hi:{topic}"))
+             except Exception: pass
 
         # 3. Deduplicate and Save
         if new_items:
@@ -233,16 +324,18 @@ class VideoEngine:
                     video_id = video['videoId']
                     title = video['title']['runs'][0]['text']
                     
-                    # Extract best thumbnail - prefer maxresdefault
+                    # Extract best thumbnail using actual YouTube data
                     thumbnails = video['thumbnail']['thumbnails']
                     if thumbnails:
-                        # Try to get highest quality
-                        thumbnail_url = thumbnails[-1]['url']
-                        # Clean URL and use maxresdefault for better quality
-                        if 'hqdefault' in thumbnail_url or 'mqdefault' in thumbnail_url:
-                            thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+                        # Use the highest quality thumbnail available
+                        # YouTube provides: default (120x90), medium (320x180), high (480x360), standard (640x480), maxres (1280x720)
+                        thumbnail_url = thumbnails[-1]['url']  # Last one is usually highest quality
+                        
+                        # Try to upgrade to hqdefault (more reliable than maxresdefault)
+                        if 'hqdefault' in thumbnail_url or 'mqdefault' in thumbnail_url or 'sddefault' in thumbnail_url:
+                            thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
                     else:
-                        thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/maxresdefault.jpg"
+                        thumbnail_url = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
                     
                     # Extract Channel Name
                     channel_name = video.get('ownerText', {}).get('runs', [{}])[0].get('text', 'Unknown')
@@ -250,6 +343,7 @@ class VideoEngine:
                     # Basic Metadata
                     view_count = video.get('viewCountText', {}).get('simpleText', '0 views')
                     published = video.get('publishedTimeText', {}).get('simpleText', 'Recently')
+                    duration = video.get('lengthText', {}).get('simpleText', '00:00')
 
                     results.append({
                         'id': video_id,
@@ -261,13 +355,15 @@ class VideoEngine:
                         'source': channel_name,  # Alias for consistency
                         'views': view_count,
                         'published': published,
+                        'duration': duration,
                         'timestamp': time.time(),
                         'source_type': 'youtube'
                     })
                 except KeyError:
                     continue
         except Exception as e:
-            print(f"⚠️ [VideoEngine] Error processing {source_tag} stream: {e}")
+            # print(f"⚠️ [VideoEngine] Error processing {source_tag} stream: {e}")
+            pass
         return results
 
     def _is_fuzzy_duplicate(self, title, existing_titles, threshold=0.85):
@@ -293,7 +389,7 @@ class VideoEngine:
 
     def _save_to_db(self, videos):
         """Saves videos with strict deduplication."""
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
         # Handle 'is_approved' column check/migration just in case
         try:
              conn.execute("SELECT is_approved FROM videos LIMIT 1")
@@ -334,9 +430,6 @@ class VideoEngine:
         c.execute("SELECT COUNT(*) FROM videos")
         count = c.fetchone()[0]
         if count > 200:
-            # Retrieve IDs of oldest videos ensuring we keep APPROVED ones if possible? 
-            # Strategy: Delete oldest videos regardless of approval? 
-            # Better: Delete oldest, but maybe keep 'featured'? For now, simple FIFO.
             limit = count - 200
             c.execute("DELETE FROM videos WHERE id IN (SELECT id FROM videos ORDER BY timestamp ASC LIMIT ?)", (limit,))
             conn.commit()
@@ -347,7 +440,7 @@ class VideoEngine:
 
     def get_trending(self, limit=50):
         """Fetch videos for the Feed (Approved Only)."""
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         try:
@@ -358,7 +451,6 @@ class VideoEngine:
         conn.close()
         
         if not rows:
-             # Fallback if DB is completely empty (e.g. first run)
              pass 
              
         # Convert to dicts
@@ -372,7 +464,7 @@ class VideoEngine:
             text = (item.get('title', '') + ' ' + item.get('channel', '')).lower()
             for k in priority_keywords:
                 if k in text: 
-                    return 2  # High Priority
+                    return 100  # High Priority
             return 1 # Normal
             
         # Sort: Primary = Priority (Desc), Secondary = Timestamp (Desc)
@@ -385,7 +477,7 @@ class VideoEngine:
 
     def get_all_videos(self):
         """Admin: Fetch all videos."""
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
         conn.row_factory = sqlite3.Row
         c = conn.cursor()
         try:
@@ -397,67 +489,93 @@ class VideoEngine:
 
     def toggle_approval(self, video_id, status):
         """Admin: Toggle approval."""
-        conn = sqlite3.connect(DB_FILE)
+        conn = sqlite3.connect(DB_FILE, timeout=60.0, check_same_thread=False)
         c = conn.cursor()
         c.execute("UPDATE videos SET is_approved = ? WHERE id = ?", (1 if status else 0, video_id))
         conn.commit()
         conn.close()
         return True
 
-    def search(self, query, limit=20, lang='en'):
+    def search(self, query, limit=50, lang='en', apply_strict=True):
         """
-        Live Search for Videos.
+        Live Search for Videos with Relevance Ranking.
         """
         results = []
         try:
-            # 1. Enforce Strict Topic Context
-            active_topics = topic_manager.get_active_keywords()
-            context_keywords = [t for t in active_topics if t not in ["Christianity", "Global News"]]
+            print(f"🎥 [VideoEngine] YouTube search request: '{query}' (Lang: {lang})")
             
-            # If we have strict topics (Science, Tech, Sports), append them to the query
-            # This ensures "Stars" -> "Stars Science" and "Song" -> "Song Science"
-            if context_keywords:
-                 topic_suffix = " ".join(context_keywords)
-                 query = f"{query} {topic_suffix}"
+            # [STRICT TOPIC CONTROL]
+            # Only apply if specifically requested (default) AND unrelated to priority content
+            if apply_strict:
+                active_topics = topic_manager.get_active_keywords()
+                if active_topics:
+                    topic_constraint = " (" + " OR ".join([f'"{t}"' for t in active_topics]) + ")"
+                    if not any(t.lower() in query.lower() for t in active_topics):
+                         query += topic_constraint
+                         print(f"🔒 [VideoEngine] Strict Topic applied: {query}")
 
-            # 2. Add Language Context
-            if lang == 'hi':
-                 search_query = f"{query} hindi" 
-            elif lang == 'ta':
-                 search_query = f"{query} tamil"
-            else:
-                 search_query = query 
-
-
+            # Build search query - keep it simple and accurate
+            match lang:
+                case 'hi':
+                    search_query = f"{query} Hindi" if query.isascii() else query
+                case 'ta':
+                    search_query = f"{query} Tamil" if query.isascii() else query
+                case _:
+                    search_query = query
             
-            print(f"🔎 [VideoEngine] Searching YouTube for: {search_query} (Lang: {lang})")
-            videos = scrapetube.get_search(search_query, limit=limit)
+            print(f"🔍 [VideoEngine] Final YouTube query: '{search_query}'")
+            
+            # Use scrapetube for YouTube search with timeout protection
+            try:
+                videos = scrapetube.get_search(search_query, limit=min(limit * 2, 100))  # Fetch more for better filtering
+            except Exception as e:
+                print(f"⚠️ [VideoEngine] scrapetube.get_search failed: {e}")
+                # Return empty list instead of crashing
+                return []
             
             # Normalize to match our internal format
             normalized_results = self._process_videos(videos, source_tag="Search")
             
-            # Add 'source_type' for frontend
+            # Add 'source_type' for frontend and calculate relevance
             for nr in normalized_results:
-                nr['source_type'] = 'video'
-                # Ensure 'image' key exists if frontend expects it (News uses 'image', Video uses 'thumbnail')
-                nr['image'] = nr['thumbnail']
+                nr['source_type'] = 'youtube'
+                nr['image'] = nr.get('thumbnail')
+                
+                # Relevance Scoring (Neutral internet-standard ranking)
+                relevance_score = 0
+                query_lower = query.lower()
+                title_lower = nr.get('title', '').lower()
+                channel_lower = nr.get('channel', '').lower()
+                
+                # 1. Exact phrase match in title (Highest relevance)
+                if query_lower in title_lower:
+                    relevance_score += 50
+                    
+                # 2. Individual word match in title
+                for word in query_lower.split():
+                    if len(word) > 2 and word in title_lower:
+                        relevance_score += 10
+                        
+                # 3. Channel name match
+                if query_lower in channel_lower:
+                    relevance_score += 20
+                
+                nr['_relevance'] = relevance_score
                 results.append(nr)
+                
+            # Sort by relevance
+            results.sort(key=lambda x: x.get('_relevance', 0), reverse=True)
+            
+            # Remove relevance score before returning (internal use only)
+            for r in results:
+                r.pop('_relevance', None)
+                
+            print(f"✅ [VideoEngine] Found {len(results)} results for '{query}'")
+            return results[:limit]  # Return only requested limit
                 
         except Exception as e:
             print(f"❌ [VideoEngine] Search failed: {e}")
-            
-        # Priority Boosting: Jesus Redeems / Mohan C Lazarus
-        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
-        
-        def get_priority_score(video):
-             score = 0
-             text = (video.get('title', '') + ' ' + video.get('channel', '')).lower()
-             for k in priority_keywords:
-                 if k in text: score += 10
-             return score
-
-        results.sort(key=get_priority_score, reverse=True)
-        return results
+            return []
 
     def get_videos_by_language(self, lang, limit=50, topic_query=None):
         """Unified Master Video Search: En + Ta + Hi mixed."""
@@ -469,10 +587,6 @@ class VideoEngine:
         ]
         
         all_results = []
-        # Parallel fetch
-        # Note: scrapetube is generator based, so we need to iterate to fetch
-        # We can reuse self.search helper
-        
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             future_to_search = {
                 executor.submit(self.search, s['q'], limit=20, lang=s['lang']): s 
@@ -491,12 +605,22 @@ class VideoEngine:
                 seen_ids.add(r['id'])
                 unique_results.append(r)
         
+        # [IMPROVED] Inject JRM videos from DB to ensure they are present
+        # Because general "Christianity" search might miss specific JRM content
+        jrm_videos = self.get_trending(limit=5) # This gets JRM-sorted videos
+        for v in jrm_videos:
+            if v['id'] not in seen_ids:
+                # Add JRM video if not already in search results
+                unique_results.append(v)
+                seen_ids.add(v['id'])
+
         # Priority Sort
-        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
+        priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus', 'jrm']
         def get_priority_score(item):
             text = (item.get('title', '') + ' ' + item.get('channel', '')).lower()
             for k in priority_keywords:
-                 if k in text: return 2
+                 # Massive boost to ensure they are noticeably first
+                 if k in text: return 1000 
             return 1
             
         unique_results.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
@@ -504,6 +628,3 @@ class VideoEngine:
         # Apply Geo-Sorting
         sorter = GeoSorter()
         return sorter.sort_results(unique_results)
-
-# Singleton Interface (optional, if needed by api.py import style)
-# engine = VideoEngine() 

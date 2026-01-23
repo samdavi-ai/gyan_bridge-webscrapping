@@ -1,10 +1,3 @@
-import concurrent.futures
-from .agents import SearchAgents
-from .filter_layer import ContentFilter
-from .hybrid_ranker import HybridRanker
-from .refiner import QueryRefiner
-from .geo_sorter import GeoSorter
-
 class Orchestrator:
     """
     The 'Conductor' of the orchestra.
@@ -12,65 +5,79 @@ class Orchestrator:
     Pipeline: Search -> Dedupe -> ContentFilter -> HybridRanker.
     """
     def __init__(self):
-        # Precise Dorks
+        # Precise Dorks (Moved intents definition below imports)
         self.intents = {
-            'general': [
-                '{topic}'
-            ],
-            'academic': [
-                '{topic} research',
-                '{topic} site:.edu'
-            ],
-            # SUPER INTENT: Christ-Centred Data
+            'general': ['{topic}'],
+            'academic': ['{topic} research', '{topic} site:.edu'],
             'christ_data': [
-                # Global Christian News & Media
                 '{topic} site:christianpost.com OR site:cbn.com OR site:christianitytoday.com',
                 '{topic} site:godreports.com OR site:religionnews.com OR site:premierchristian.news',
                 '{topic} site:worthynews.com OR site:assistnews.net OR site:evangelicalfocus.com',
-                
-                # Theology, Apologetics & Resources
                 '{topic} site:biblegateway.com OR site:crosswalk.com OR site:biblestudytools.com',
                 '{topic} site:desiringgod.org OR site:thegospelcoalition.org OR site:ligonier.org',
                 '{topic} site:gotquestions.org OR site:blueletterbible.org OR site:biblehub.com',
-                
-                # Persecution & Missions
                 '{topic} site:opendoors.org OR site:persecution.org OR site:vom.org',
                 '{topic} site:missionnetworknews.org OR site:barnabasfund.org',
-                
-                # Research & Academic
                 '{topic} site:gordonconwell.com OR site:pewresearch.org "christian"',
                 '{topic} site:fuller.edu OR site:dts.edu',
-                
-                # General Dorks
                 '{topic} "christian perspective" OR "biblical view"',
                 '{topic} "church history" OR "theology"'
             ],
-            'social': [
-                '{topic} forum',
-                '{topic} reddit'
-            ],
-            'video': [
-                '{topic} youtube',
-                '{topic} site:tbn.org',
-                '{topic} site:godtube.com'
-            ],
-            'commerce': [
-                '{topic} price',
-                '{topic} buy'
-            ],
+            'social': ['{topic} forum', '{topic} reddit'],
+            'video': ['{topic} youtube', '{topic} site:tbn.org', '{topic} site:godtube.com'],
+            'commerce': ['{topic} price', '{topic} buy'],
             'news': [
                 '{topic} news',
                 '{topic} site:reuters.com OR site:apnews.com OR site:bbc.com',
                 '{topic} site:cnn.com OR site:foxnews.com OR site:aljazeera.com'
             ]
         }
+        self.components_loaded = False
+
+    def _load_components(self):
+        if self.components_loaded: return
+        print("🎻 Orchestrator: Lazy Loading Components...")
+        from .agents import SearchAgents
+        from .filter_layer import ContentFilter
+        from .hybrid_ranker import HybridRanker
+        from .refiner import QueryRefiner
+        from .geo_sorter import GeoSorter
+        
         self.agents = SearchAgents()
         self.content_filter = ContentFilter()
         self.ranker = HybridRanker()
         self.refiner = QueryRefiner()
         self.geo_sorter = GeoSorter()
+        self.components_loaded = True
 
-    def run(self, topic, active_intents=['general'], limit=50, time_filter=None, keys=None):
+    def run(self, topic, active_intents=['general'], limit=100, time_filter=None, keys=None):
+        import concurrent.futures
+        from src.search_utils import sanitize_query
+        
+        # Input validation
+        if not topic or not isinstance(topic,str):
+            errors = ["Invalid topic provided"]
+            results = []
+            return results, errors
+        
+        topic = sanitize_query(topic)
+        if not topic:
+            errors = ["Topic is empty after sanitization"]
+            results = []
+            return results, errors
+        
+        # [STRICT TOPIC CONTROL]
+        from src.topic_manager import topic_manager
+        active_topics = topic_manager.get_active_keywords()
+        if active_topics:
+            # Force the search to include at least one of the active topics
+            topic_constraint = " AND (" + " OR ".join([f'"{t}"' for t in active_topics]) + ")"
+            # Only append if not already present to avoid "Christianity AND Christianity"
+            if not any(t.lower() in topic.lower() for t in active_topics):
+                print(f"🔒 [Orchestrator] Applying Strict Topic Control: '{topic}' -> '{topic}{topic_constraint}'")
+                topic += topic_constraint
+        
+        self._load_components()
         results = []
         errors = []
         
@@ -83,14 +90,10 @@ class Orchestrator:
         # 2. Refine Query (AI or Logic)
         refined_topic = self.refiner.refine(topic)
         
-        # 3. Build Query List (Use refined topic for better precision)
-        # We can mix: Original Topic for broad, Refined for specific
+        # 3. Build Query List
         queries = []
         
-        # CHRISTIAN-FIRST: Always include 'christ_data' intent for Christian-only results
         search_intents = list(active_intents)
-        if 'christ_data' not in search_intents:
-            search_intents.insert(0, 'christ_data')  # Prioritize Christian sources
         if 'general' not in search_intents:
             search_intents.append('general')
             
@@ -98,12 +101,12 @@ class Orchestrator:
             if intent in self.intents:
                 for template in self.intents[intent]:
                     queries.append({
-                        'q': template.format(topic=refined_topic), # Use REFINED topic
+                        'q': template.format(topic=refined_topic),
                         'intent': intent
                     })
         
-        # 4. Parallel Execution
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # 4. Parallel Execution with Increased Workers for Speed
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             future_to_q = {}
             for q_obj in queries:
                 if serp_key:
@@ -123,34 +126,28 @@ class Orchestrator:
                     print(f"⚠️ {error_msg}")
                     errors.append(error_msg)
 
-        # 5. Aggressive Deduplication & Normalization
-        unique = []
-        seen_urls = set()
-        seen_titles = set()
+        # 5. Aggressive Deduplication & Normalization using utility
+        from src.search_utils import deduplicate_results, normalize_url
         
-        for r in results:
-            # Normalize: Remove https/http diffs, trailing slashes, and query params
-            norm_url = r['url'].split('://')[-1].split('?')[0].rstrip('/').lower()
-            norm_title = r['title'].lower().strip()
+        # First deduplicate by URL
+        unique = deduplicate_results(results, key='url')
+        
+        # Additional title-based dedup for extra safety
+        seen_titles = set()
+        final_unique = []
+        for r in unique:
+            norm_title = r.get('title', '').lower().strip()
             
-            # Stale Archive Filter
+            # Skip stale archives
             if 'archives' in norm_title and len(norm_title) < 20:
                 continue
-
-            if norm_url not in seen_urls and norm_title not in seen_titles:
-                seen_urls.add(norm_url)
+            
+            if norm_title and norm_title not in seen_titles:
                 seen_titles.add(norm_title)
-                unique.append(r)
+                final_unique.append(r) # Add to final_unique if not seen
         
         # 6. Content-Based Filtering (Quality Gate)
-        # Removes low-quality/spam items before ranking to save compute
-        # Strictness: 20 -> A bit relaxed to prevent zero-results, but still penalizes missing core words (via filter_layer)
-        # RELAXED: Lowered threshold from 20 to 5 to let almost everything through
-        # 6. Content-Based Filtering (Quality Gate)
-        # Removes low-quality/spam items before ranking to save compute
-        # Strictness: 20 -> A bit relaxed to prevent zero-results, but still penalizes missing core words (via filter_layer)
-        # RELAXED: Lowered threshold from 20 to 5 to let almost everything through
-        filtered_results = self.content_filter.filter_batch(unique, topic, min_score=5)
+        filtered_results = self.content_filter.filter_batch(final_unique, topic, min_score=5)
         
         # 7. Hybrid Re-Ranking (The User's Formula)
         # BM25 + Vectors + QualityBoost

@@ -1,126 +1,239 @@
+from dotenv import load_dotenv, dotenv_values
+import os
+import sys
+
+# Fix Unicode encoding for Windows console
+if sys.platform == 'win32':
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except Exception:
+        pass  # Fallback if reconfigure fails
+
+# Load .env BEFORE other imports to ensure TF/Env vars are set
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
+dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+load_dotenv(dotenv_path)
+
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
-import os
 import re
 import requests
+import json
 from datetime import datetime
-from dotenv import load_dotenv
 # Fix imports since we moved files
-import sys
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from src.orchestrator import Orchestrator
-from src.scraper import UniversalScraper
+# from src.scraper import UniversalScraper  <-- Removed to consolidate logic
 from src.news_feeder import NewsFeeder
 from src.extractor import ContentExtractor
-from src.analytics import AnalyticsEngine
-from src.analysis import EventTrendAnalyzer
-from src.predictor import Predictor
-from src.rag_engine import RAGEngine
-from src.llm_analytics import LLMAnalytics
-from src.legal_engine import LegalAssistant
+from src.translator import ContentTranslator
+from src.refiner import QueryRefiner
+from src.search_utils import sanitize_query
 
-from dotenv import load_dotenv, dotenv_values
-
-# CRITICAL FIX: Force override system environment variables
-# Load from the directory where api.py is located (server/.env)
-dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-load_dotenv(dotenv_path, override=True)
 
 # Double-check: Explicitly set the API key from .env to prevent any caching issues
 env_values = dotenv_values(dotenv_path)
 if 'OPENAI_API_KEY' in env_values:
     os.environ['OPENAI_API_KEY'] = env_values['OPENAI_API_KEY']
-    print(f"✅ OpenAI API Key loaded: {env_values['OPENAI_API_KEY'][:15]}...{env_values['OPENAI_API_KEY'][-10:]}")
+    # [SECURITY] Removed API key from logs to prevent information disclosure
+    print("✅ OpenAI API Key loaded from .env file")
 else:
     print("⚠️  WARNING: OPENAI_API_KEY not found in .env file!")
 
 
-app = Flask(__name__, static_folder='static', template_folder='templates')
+app = Flask(__name__, static_folder='../client/dist', static_url_path='/')
 CORS(app)
 
 from src.video_engine import VideoEngine
 from src.topic_manager import topic_manager
 
-# Initialize RAG & LLM
-rag_engine = RAGEngine()
-llm_analytics = LLMAnalytics(rag_engine)
-
-# Initialize core components
+# Initialize core components (Lightweight)
 orchestrator = Orchestrator()
-scraper = UniversalScraper()
-# NewsFeeder now powers the RAG with live data
-news_feeder = NewsFeeder(rag_engine)
+# scraper = UniversalScraper() <-- Removed
+extractor = ContentExtractor()
+news_feeder = NewsFeeder(None) # RAG injected later
+news_feeder.start_background_worker()
 
-# Initialize Video Engine (New Architecture)
 video_engine = VideoEngine()
+video_engine.start_background_worker()
 
-# [FIX] Prevent Double Background Worker with Flask Reloader
-# Only start the worker in the child process (WERKZEUG_RUN_MAIN='true') 
-# or if reloader is disabled (not typical in debug=True default).
-# [MOVED] Worker start moved to __main__ block to ensure execution in non-debug mode
-# if os.environ.get("WERKZEUG_RUN_MAIN") == "true":
-#     print("🚀 Starting VideoEngine Background Worker...")
-#     video_engine.start_background_worker()
+api_key = os.environ.get('OPENAI_API_KEY', '').strip()
+translator = ContentTranslator(api_key=api_key)
 
-# Inject LLM into Analyzer
-analyzer = EventTrendAnalyzer(llm_analytics)
+# Query refinement helper (LLM-powered)
+query_refiner = QueryRefiner()
 
+# Global Placeholders for Heavy ML Components
+rag_engine = None
+llm_analytics = None
+analyzer = None
+predictor = None
+legal_assistant = None
+analytics = None
+discovery_engine = None
+
+import threading
+def _load_heavy_models():
+    global rag_engine, llm_analytics, analyzer, predictor, legal_assistant, analytics
+    print("⏳ [API] Background Loading Heavy ML Models...")
+    
+    from src.analytics import AnalyticsEngine
+    from src.analysis import EventTrendAnalyzer
+    from src.predictor import Predictor
+    from src.rag_engine import RAGEngine
+    from src.llm_analytics import LLMAnalytics
+    from src.legal_engine import LegalAssistant
+    
+    from src.searcher import DiscoveryEngine
+    
+    analytics = AnalyticsEngine()
+    predictor = Predictor()
+    rag_engine = RAGEngine()
+    discovery_engine = DiscoveryEngine()
+    llm_analytics = LLMAnalytics(rag_engine, discovery_engine=discovery_engine)
+    
+    # Inject dependencies
+    news_feeder.rag_engine = rag_engine
+    analyzer = EventTrendAnalyzer(llm_analytics)
+    legal_assistant = LegalAssistant()
+    
+    print("✅ [API] Heavy ML Models Loaded & Ready.")
+
+# Start loading in background
+threading.Thread(target=_load_heavy_models, daemon=True).start()
+
+# [NEW] Trigger immediate content fetch on startup
+def _trigger_initial_fetch():
+    print("🔄 [Startup] Triggering initial content fetch...")
+    try:
+        news_feeder.update_news()
+        video_engine.populate_db()
+        print("✅ [Startup] Initial fetch complete.")
+    except Exception as e:
+        print(f"⚠️ [Startup] Initial fetch failed: {e}")
+
+threading.Thread(target=_trigger_initial_fetch, daemon=True).start()
+
+
+# Define Base Directory for Absolute Paths
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_DIR = os.path.join(BASE_DIR, 'data')
+
+# [FIX] Ensure Analytics Data Exists on Startup
+def _ensure_analytics_file():
+    path = os.path.join(DATA_DIR, 'latest_analysis.json')
+    if not os.path.exists(DATA_DIR):
+        os.makedirs(DATA_DIR)
+    
+    if not os.path.exists(path):
+        print("⚠️ [Startup] 'latest_analysis.json' missing. Creating default...")
+        default_data = {
+            "graph_type": "bar",
+            "title": "Welcome to Analytics",
+            "insight": "Start searching to see real-time AI insights here.",
+            "summary": "Welcome! Start searching to generate intelligence reports.",
+            "sentiment_score": 0,
+            "key_entities": ["GyanBridge"],
+            "sources": [],
+            "data": [{"x": "Start", "y": 100}],
+            "timestamp": datetime.now().timestamp()
+        }
+        with open(path, 'w') as f:
+            json.dump(default_data, f)
+
+_ensure_analytics_file()
+
+# Serve React App
 @app.route('/')
 def home():
-    return render_template('index.html')
+    return app.send_static_file('index.html')
+
+# Catch-all for React Router
+@app.errorhandler(404)
+def not_found(e):
+    return app.send_static_file('index.html')
 
 
+
+@app.route('/health')
+def health():
+    return jsonify({"status": "running", "uptime": "ok"})
+
+@app.after_request
+def add_header(response):
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+def health_check():
+    return jsonify({"status": "ok", "service": "GyanBridge API"}), 200
 
 @app.route('/api/search', methods=['POST'])
 def search_endpoint():
     data = request.json
-    topic = data.get('topic')
-    intents = data.get('intents', ['general'])
-    limit = int(data.get('limit', 100))
-    time_filter = data.get('time_filter')
-    use_quota = data.get('use_quota', True)
-    search_type = data.get('type', 'web') # 'web', 'news', 'video'
-    lang = data.get('lang', 'en')
     
-    # [NEW] Super Admin Topic Filtering
-    active_keywords = topic_manager.get_active_keywords()
+    # Input validation
+    if not data:
+        return jsonify({"error": "Invalid request body"}), 400
     
-    # If topic is not provided, or generic, consider injecting active topics? 
-    # Current Search behavior: user provides explicit 'topic'. 
-    # We should APPEND Active Topics to the search context if it's a generic "feed" request, 
-    # OBUT for explicit user search, we might not want to restrict it unless requested.
-    # Requirement: "only show case and show in the ui and search results"
-    # Strategy: Append active topics to the query implicitly OR post-filter?
-    # Appending is better for engines.
-    
-    # Construct a filter string from active topics
-    # e.g. "Christianity OR Science"
-    if active_keywords:
-        topic_filter = " OR ".join([f'"{k}"' for k in active_keywords])
-        # If the user's query doesn't already contain one of these, we might want to boost them?
-        # Actually the requirement says: "which content topics is selected by the super admin is only show case"
-        # This implies a RESTRICTION.
-        # Let's append it to the query to guide the search engine.
-        full_query = f"({topic}) AND ({topic_filter})"
-    else:
-        # If NO topics are active, strict interpretation means show nothing? 
-        # Or fall back to everything? Let's assume fallback to query only if list is empty to avoid 0 results.
-        full_query = topic
-
+    topic = data.get('topic', '').strip()
     if not topic:
         return jsonify({"error": "Topic is required"}), 400
+    
+    # Sanitize and validate topic length
+    topic = sanitize_query(topic, max_length=500)
+    if not topic:
+        return jsonify({"error": "Invalid topic after sanitization"}), 400
+    
+    # Extract and validate other parameters
+    try:
+        intents = data.get('intents', ['general'])
+        limit = int(data.get('limit', 100))
+        time_filter = data.get('time_filter')
+        use_quota = data.get('use_quota', True)
+        search_type = data.get('type', 'web')  # 'web', 'news', 'video'
+        lang = data.get('lang', 'en')
+        
+        # Validate limits
+        if limit < 1 or limit > 200:
+            limit = 100
+        
+        # Validate search type
+        if search_type not in ['web', 'news', 'video', 'legal']:
+            search_type = 'web'
+            
+    except (ValueError, TypeError) as e:
+        return jsonify({"error": f"Invalid parameter: {str(e)}"}), 400
+    
+    # ==========================================
+    # CRITICAL: NO TOPIC FILTERING FOR USER SEARCHES
+    # ==========================================
+    # Topic filtering via Super Admin controls should ONLY apply to 
+    # curated feeds (/api/news, /api/videos), NOT to explicit user searches.
+    # User searches MUST search the entire internet without restrictions.
+    # ==========================================
+
+    # Optional: LLM-powered refinement for certain types
+    refined_topic = topic
+    if search_type in ['news', 'video']:
+        # For news & video we refine once here (orchestrator refines internally for 'web')
+        try:
+            refined_topic = query_refiner.refine(topic)
+        except Exception as e:
+            print(f"Query refinement failed, using raw topic. Error: {e}")
+            refined_topic = topic
 
     # 1. Video Search
     if search_type == 'video':
         try:
             # If non-English, perform live localized search
             if lang != 'en':
-                results = video_engine.search(full_query, limit=limit, lang=lang)
+                results = video_engine.search(refined_topic, limit=limit, lang=lang)
             else:
-                # English default: Database Approved content (or search if query is specific)
-                # Note: 'full_query' is populated. If it's just a generic feed request, we might want to check that?
-                # But here in /search, it's always a specific query.
-                results = video_engine.search(full_query, limit=limit)
+                # Use raw topic for maximum coverage
+                results = video_engine.search(refined_topic, limit=limit)
             return jsonify({"results": results, "count": len(results), "errors": []})
         except Exception as e:
             return jsonify({"results": [], "errors": [str(e)], "count": 0}), 500
@@ -128,23 +241,42 @@ def search_endpoint():
     # 2. News Search
     elif search_type == 'news':
         try:
-             # Use filtered query
+             # Use refined topic for better coverage
+             search_query = refined_topic
              if lang != 'en':
-                 results = news_feeder.search(full_query, limit=limit, lang=lang)
+                 results = news_feeder.search(search_query, limit=limit, lang=lang)
              else:
-                 results = news_feeder.search(full_query, limit=limit)
+                 results = news_feeder.search(search_query, limit=limit)
+
+             # Trigger Background Analysis on this Topic
+             threading.Thread(target=_run_background_analysis, args=(topic, results)).start()
+
              return jsonify({"results": results, "count": len(results), "errors": []})
         except Exception as e:
              return jsonify({"results": [], "errors": [str(e)], "count": 0}), 500
 
-    # 3. General Web Search (Orchestrator)
+    # 3. Legal Search (Specialized Agent)
+    elif search_type == 'legal':
+        try:
+             print(f"⚖️ API: Directing '{topic}' to Legal Assistant (Lang: {lang})")
+             result = legal_assistant.ask(topic, lang=lang)
+             return jsonify(result)
+        except Exception as e:
+             print(f"❌ Legal Search Error: {e}")
+             return jsonify({"error": str(e)}), 500
+
+    # 3. General Web Search (Orchestrator + Comprehensive Fallback)
     # Keys setup
     serpapi_key = os.getenv("SERPAPI_KEY") if use_quota else None
     keys = {'serpapi': serpapi_key}
 
     print(f"📡 API: Searching '{topic}' (Type: {search_type})...")
     
+    results = []
+    errors = []
+    
     try:
+        # Primary: Orchestrator (Parallel multi-intent search)
         results, errors = orchestrator.run(
             topic, 
             active_intents=intents, 
@@ -153,13 +285,45 @@ def search_endpoint():
             keys=keys
         )
     except Exception as e:
-        print(f"🔥 BLOCKING ERROR: {e}")
-        return jsonify({"results": [], "errors": [f"Critical Orchestrator Failure: {str(e)}"], "count": 0}), 500
+        print(f"⚠️ Orchestrator Error: {e}")
+        errors.append(f"Orchestrator failed: {str(e)}")
+
+    # [NEW] Trigger Background Analysis for Web Search too (User Request)
+    if results:
+        threading.Thread(target=_run_background_analysis, args=(topic, results)).start()
+
+    # [NEW] Robust Fallback Strategy
+    # If orchestrator found very few results or failed, trigger DiscoveryEngine for a deep scan
+    if len(results) < 10 and discovery_engine:
+        print(f"🔄 API: Low results ({len(results)}). Triggering DiscoveryEngine fallback...")
+        try:
+            # For general internet search, we don't want to force trusted religious sources
+            fallback_results = discovery_engine.discover(topic, max_results=limit, include_trusted=False)
+            
+            # Normalize DiscoveryEngine results to match Orchestrator schema
+            normalized_fallback = []
+            for r in fallback_results:
+                normalized_fallback.append({
+                    'title': r.get('title'),
+                    'url': r.get('url'),
+                    'snippet': r.get('metadata', {}).get('snippet') or r.get('metadata', {}).get('description', ''),
+                    'source_type': r.get('source_type', 'web'),
+                    'engine': 'DiscoveryEngine',
+                    'image': r.get('image')
+                })
+            
+            # Combine and deduplicate
+            from src.search_utils import deduplicate_results
+            results.extend(normalized_fallback)
+            results = deduplicate_results(results, key='url')
+            print(f"✅ Fallback Complete. Total results now: {len(results)}")
+        except Exception as fe:
+            print(f"⚠️ Fallback Error: {fe}")
+            errors.append(f"Fallback search failed: {str(fe)}")
     
-    # Process results to ensure frontend friendliness (add image placeholders if needed)
+    # Process results to ensure frontend friendliness
     processed = []
     for r in results:
-        # If no image explicitly found, we might add a favicon fallback logic in frontend or here
         processed.append({
             'title': r.get('title') or 'Untitled Result',
             'url': r.get('url') or r.get('href') or r.get('link') or '#',
@@ -190,10 +354,13 @@ def scrape_endpoint():
          
     print(f"🕷️ API: Scraping {item.get('url')}...")
     try:
-        scraped = scraper.scrape_item(item)
+        # scraped = scraper.scrape_item(item) <-- Deprecated
+        # Use lightweight Extractor instead
+        content = extractor.extract(item.get('url'))
+        scraped = {'content': content, 'error': None if content else "Failed to extract"}
         
         # RAG Ingestion
-        if scraped.get('content'):
+        if scraped.get('content') and rag_engine:
             # Scrape thread usually returns dict, let's ensure we ingest valid text
             rag_engine.ingest(
                 scraped['content'], 
@@ -209,25 +376,219 @@ def scrape_endpoint():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# --- Analytics Background System ---
+def _run_background_analysis(query, results):
+    """Run LLM analysis in background and save to file"""
+    try:
+        if not llm_analytics:
+            # If models aren't loaded yet, wait a bit or direct load
+            print("⏳ [Analytics] Waiting for models to load...")
+            import time
+            time.sleep(2)
+            if not llm_analytics:
+                print("❌ [Analytics] Models still not loaded. Aborting.")
+                return
+
+        
+        # Extract snippets for context
+        snippets = []
+        for r in results[:15]: # Increased context
+            txt = r.get('snippet') or r.get('description', '')
+            if txt: snippets.append(f"Source: {r.get('title')}\n{txt}")
+            
+        direct_context = "\n\n".join(snippets)
+        print(f"🧠 [Analytics] Starting analysis for '{query}'...")
+        
+        report = llm_analytics.analyze_and_graph(query, direct_context=direct_context)
+        
+        # Save to file
+        if report and 'error' not in report:
+            with open(os.path.join(DATA_DIR, 'latest_analysis.json'), 'w') as f:
+                json.dump(report, f)
+            print(f"✅ [Analytics] Report generated for '{query}'.")
+        else:
+             print(f"⚠️ [Analytics] Generation returned error or empty: {report}")
+
+    except Exception as e:
+        print(f"❌ [Analytics] Analysis failed: {e}")
+        import traceback
+        traceback.print_exc()
+
+@app.route('/api/analytics/report', methods=['GET'])
+def analytics_report():
+    """Get the latest analysis report"""
+    try:
+        report_path = os.path.join(DATA_DIR, 'latest_analysis.json')
+        if os.path.exists(report_path):
+            with open(report_path, 'r') as f:
+                return jsonify(json.load(f))
+    except:
+        pass
+    return jsonify({"error": "No analysis available. Search for a topic first."})
+
+
 @app.route('/api/news', methods=['GET'])
 def news_endpoint():
     """Fetch live Christian news (Localized or Cached)"""
     try:
         lang = request.args.get('lang', 'en')
-        topic_query = topic_manager.get_active_topic_query()
-        
-        if lang != 'en':
-            # Localized Search (with Topic Enforcement)
-            articles = news_feeder.get_news_by_language(lang, topic_query=topic_query)
-        else:
-            # English Default (DB) - Note: DB might need filtering, but for now we enforce via Live Search 
-            # If we want strict topic enforcement in English too, we should search instead of dump DB.
-            # Decision: Use Search for English too if topics are enforced.
-            if topic_query:
-                 articles = news_feeder.search(topic_query, limit=50) # Use active topics as query
-            else:
-                 articles = news_feeder.get_news(limit=1000)
+        # Explicit search query from UI (dashboard/news search bar)
+        query = request.args.get('q', '').strip()
+
+        # If user provided a search query, we treat this as an explicit search
+        # and DO NOT restrict by Super Admin topics (similar to /api/search behaviour).
+        if query:
+            search_q = sanitize_query(query)
+            if not search_q:
+                return jsonify([])  # Invalid/empty after sanitization
+
+            try:
+                # LLM-powered refinement before hitting Google News
+                if query_refiner and query_refiner.llm:
+                    refined_q = query_refiner.refine(search_q)
+                else:
+                    refined_q = search_q
+                    print("⚠️ QueryRefiner not available, using raw query")
+            except Exception as e:
+                print(f"⚠️ News query refinement failed, using raw query. Error: {e}")
+                refined_q = search_q
+
+            print(f"🔍 [News Search] Query: '{query}' -> Refined: '{refined_q}'")
+            # Perform comprehensive search and scraping
+            articles = news_feeder.search(refined_q, limit=20, lang=lang)
+            print(f"✅ [News Search] Found {len(articles)} articles from Google News RSS")
             
+            # [ENHANCED] Also scrape content snippets for better relevance
+            # This ensures we have full content available for reader mode
+            if articles and rag_engine:
+                print(f"📚 [News Search] Ingesting {len(articles)} articles into RAG for better search...")
+                for article in articles[:10]:  # Limit to top 10 for performance
+                    try:
+                        # Extract snippet for RAG ingestion
+                        snippet = article.get('snippet', '') or article.get('summary', '')
+                        if snippet:
+                            rag_engine.ingest(
+                                f"{article.get('title', '')}\n{snippet}",
+                                metadata={
+                                    "source": article.get('url', ''),
+                                    "title": article.get('title', 'Unknown'),
+                                    "type": "news_search",
+                                    "query": refined_q
+                                }
+                            )
+                    except Exception as e:
+                        print(f"⚠️ RAG ingestion failed for article: {e}")
+                        pass
+
+            # Translate if needed
+            if lang != 'en' and articles:
+                try:
+                    for a in articles:
+                        if 'summary' in a:
+                            a['snippet'] = a['summary']
+                    articles = translator.translate_batch(articles, lang)
+                except Exception as e:
+                    print(f"Translation error (news search): {e}")
+
+            # Normalize snippet/summary fields
+            for a in articles:
+                if 'snippet' in a:
+                    a['summary'] = a['snippet']
+
+            return jsonify(articles)
+
+        # [STRICT TOPIC FILTERING] Only show content from active topics selected by Super Admin
+        topic_query = topic_manager.get_active_topic_query()
+        active_topics = topic_manager.get_active_keywords()
+        
+        articles = []
+        
+        # STRICT MODE: If topics are selected, ONLY show content from those topics
+        if active_topics:
+            if topic_query:
+                # Search specific active topics only
+                try:
+                    articles = news_feeder.get_news_by_language(lang, topic_query=topic_query)
+                    print(f"✅ [News Feed] Strict topic filtering: Found {len(articles)} articles for topics: {active_topics}")
+                except Exception as e:
+                    print(f"⚠️ [News Feed] Topic search failed: {e}")
+                    articles = []
+            
+            # If no results from search, try DB but filter by active topics
+            if not articles:
+                try:
+                    all_db_news = news_feeder.get_news(limit=100)  # Get more to filter
+                    # Filter by active topics
+                    filtered_articles = []
+                    
+                    # Define loose keywords for specific topics
+                    topic_keywords = {
+                        "Christianity": ['church', 'jesus', 'christ', 'faith', 'bible', 'prayer', 'gospel', 'pastor', 'bishop', 'vatican', 'catholic', 'protestant', 'ministry'],
+                        "Global News": ['news', 'world', 'international', 'report']
+                    }
+
+                    for article in all_db_news:
+                        title_lower = article.get('title', '').lower()
+                        snippet_lower = article.get('snippet', '').lower()
+                        source_lower = article.get('source', '').lower()
+                        combined_text = f"{title_lower} {snippet_lower} {source_lower}"
+                        
+                        # Check if article matches any active topic OR its related keywords
+                        matched = False
+                        for topic in active_topics:
+                            if topic.lower() in combined_text:
+                                matched = True
+                                break
+                            # Check related keywords
+                            if topic in topic_keywords:
+                                if any(k in combined_text for k in topic_keywords[topic]):
+                                    matched = True
+                                    break
+                                    
+                        if matched:
+                            filtered_articles.append(article)
+                    
+                    # If we filtered everything out, effectively showing nothing...
+                    # Fallback: if 'Christianity' is active, and we have items, just show them (DB is mostly christian anyway)
+                    if not filtered_articles and "Christianity" in active_topics and all_db_news:
+                         print("⚠️ [News Feed] Strict filter empty. Defaulting to all DB news (Assuming Christian context).")
+                         filtered_articles = all_db_news
+
+                    articles = filtered_articles[:20]  # Limit to 20
+                    print(f"✅ [News Feed] DB filtered by topics: {len(articles)} articles match {active_topics}")
+                except Exception as e:
+                    print(f"⚠️ [News Feed] DB filtering failed: {e}")
+                    articles = []
+        else:
+            # NO TOPICS SELECTED: Show all content (fallback mode)
+            print("⚠️ [News Feed] No topics active - showing all content")
+            try:
+                articles = news_feeder.get_news(limit=10)
+            except Exception as e:
+                print(f"⚠️ [News Feed] Fallback failed: {e}")
+                articles = []
+             
+        # Ensure list of dicts (fix for sqlite3.Row)
+        articles = [dict(a) for a in articles]
+        # print(f"API News Count: {len(articles)}")
+
+        # Translate if needed
+        # Re-enabling with reduced limit (10 items) to ensure responsiveness
+        if lang != 'en' and articles:
+            try:
+                # print(f"Translating {len(articles)} items to {lang}...")
+                for a in articles:
+                    if 'summary' in a: a['snippet'] = a['summary']
+                
+                articles = translator.translate_batch(articles, lang)
+            except Exception as e:
+                print(f"Translation error: {e}")
+                # Return English version if translation fails
+                pass
+        
+        for a in articles:
+            if 'snippet' in a: a['summary'] = a['snippet']
+
         return jsonify(articles)
     except Exception as e:
         print(f"News Error: {e}")
@@ -235,25 +596,192 @@ def news_endpoint():
 
 @app.route('/api/videos', methods=['GET'])
 def videos_endpoint():
-    """Fetch trending Christian videos (Localized or Local DB)"""
+    """Fetch trending Christian videos (Unified Master Feed)"""
     try:
         lang = request.args.get('lang', 'en')
+        # Explicit search query from UI (dashboard/videos search bar)
+        query = request.args.get('q', '').strip()
+
+        if query:
+            search_q = sanitize_query(query)
+            if not search_q:
+                return jsonify([])  # Invalid/empty after sanitization
+
+            try:
+                # LLM-powered refinement before hitting YouTube
+                if query_refiner and query_refiner.llm:
+                    refined_q = query_refiner.refine(search_q)
+                else:
+                    refined_q = search_q
+                    print("⚠️ QueryRefiner not available, using raw query")
+            except Exception as e:
+                print(f"⚠️ Video query refinement failed, using raw query. Error: {e}")
+                refined_q = search_q
+
+            print(f"🔍 [Video Search] Query: '{query}' -> Refined: '{refined_q}'")
+            # Use live YouTube search for user queries
+            # [FIX] Disable strict filtering for explicit user intent to maximize results
+            videos = video_engine.search(refined_q, limit=50, lang=lang, apply_strict=False)
+            print(f"✅ [Video Search] Found {len(videos)} videos from YouTube")
+            
+            # [ENHANCED] Ingest video metadata into RAG for better search
+            if videos and rag_engine:
+                print(f"📚 [Video Search] Ingesting {len(videos)} videos into RAG...")
+                for video in videos[:10]:  # Limit to top 10 for performance
+                    try:
+                        description = video.get('description', '') or video.get('snippet', '')
+                        if description:
+                            rag_engine.ingest(
+                                f"{video.get('title', '')}\n{description}",
+                                metadata={
+                                    "source": video.get('url', ''),
+                                    "title": video.get('title', 'Unknown'),
+                                    "type": "video_search",
+                                    "query": refined_q,
+                                    "channel": video.get('channel', '')
+                                }
+                            )
+                    except Exception as e:
+                        print(f"⚠️ RAG ingestion failed for video: {e}")
+                        pass
+            
+            return jsonify(videos)
+
+        # [STRICT TOPIC FILTERING] Only show content from active topics selected by Super Admin
         topic_query = topic_manager.get_active_topic_query()
+        active_topics = topic_manager.get_active_keywords()
         
-        if lang != 'en':
-             # Localized Search (with Topic Enforcement)
-             videos = video_engine.get_videos_by_language(lang, topic_query=topic_query)
+        videos = []
+        
+        # STRICT MODE: If topics are selected, ONLY show content from those topics
+        if active_topics:
+            if topic_query:
+                # Search specific active topics only
+                try:
+                    videos = video_engine.get_videos_by_language(lang, topic_query=topic_query)
+                    print(f"✅ [Video Feed] Strict topic filtering: Found {len(videos)} videos for topics: {active_topics}")
+                except Exception as e:
+                    print(f"⚠️ [Video Feed] Topic search failed: {e}")
+                    videos = []
+            
+            # If no results from search, try DB but filter by active topics
+            # If no results from search, try DB but filter by active topics
+            if not videos:
+                try:
+                    all_db_videos = video_engine.get_trending(limit=100)  # Get more to filter
+                    
+                    # Filter by active topics BUT allow Priority Content (JRM)
+                    filtered_videos = []
+                    priority_keywords = ['jesus redeems', 'mohan c lazarus', 'comforter tv', 'nalumavadi', 'jrm']
+                    
+                    # Define loose keywords for specific topics (Shared logic)
+                    topic_keywords = {
+                        "Christianity": ['church', 'jesus', 'christ', 'faith', 'bible', 'prayer', 'gospel', 'pastor', 'bishop', 'vatican', 'catholic', 'protestant', 'ministry', 'worship'],
+                        "Global News": ['news', 'world', 'international', 'report']
+                    }
+
+                    for video in all_db_videos:
+                        title_lower = video.get('title', '').lower()
+                        description_lower = video.get('description', '').lower()
+                        channel_lower = video.get('channel', '').lower()
+                        combined_text = f"{title_lower} {description_lower} {channel_lower}"
+                        
+                        # Always include Priority Content
+                        if any(pk in combined_text for pk in priority_keywords):
+                            filtered_videos.append(video)
+                            continue
+
+                        # Check if video matches any active topic OR its related keywords
+                        matched = False
+                        for topic in active_topics:
+                            if topic.lower() in combined_text:
+                                matched = True
+                                break
+                            # Check related keywords
+                            if topic in topic_keywords:
+                                if any(k in combined_text for k in topic_keywords[topic]):
+                                    matched = True
+                                    break
+                                    
+                        if matched:
+                            filtered_videos.append(video)
+                    
+                    # Fallback: if filtered result is empty but 'Christianity' is active, 
+                    # check if the DB has any christian content that might have been missed or if we should show JRM only
+                    if not filtered_videos and "Christianity" in active_topics:
+                         print("⚠️ [Video Feed] Strict filter empty. Including all Priority Content as fallback.")
+                         # Resort to at least showing priority content if it was filtered out (though it shouldn't be due to the check above)
+                         # But let's check basic christian terms broadly
+                         for video in all_db_videos:
+                             if any(k in (video.get('title', '') + video.get('description', '')).lower() for k in topic_keywords['Christianity']):
+                                 filtered_videos.append(video)
+                         
+                         # De-dup
+                         seen_ids = set()
+                         unique_filtered = []
+                         for v in filtered_videos:
+                             if v['id'] not in seen_ids:
+                                 unique_filtered.append(v)
+                                 seen_ids.add(v['id'])
+                         filtered_videos = unique_filtered
+                    
+                    # Sort: Priority content first
+                    def sort_key(v):
+                        text = (v.get('title', '') + v.get('channel', '')).lower()
+                        return 0 if any(k in text for k in priority_keywords) else 1
+                    
+                    filtered_videos.sort(key=sort_key)
+                    videos = filtered_videos[:20]  # Limit to 20
+                    print(f"✅ [Video Feed] DB filtered: {len(videos)} videos (Priority + Topics)")
+                except Exception as e:
+                    print(f"⚠️ [Video Feed] DB filtering failed: {e}")
+                    videos = []
         else:
-             # English Default
-             if topic_query:
-                 # Search YouTube for active topics
-                 videos = video_engine.search(topic_query, limit=50)
-             else:
-                 videos = video_engine.get_trending(limit=50)
+            # NO TOPICS SELECTED: Show all content (fallback mode)
+            print("⚠️ [Video Feed] No topics active - showing all content")
+            try:
+                videos = video_engine.get_trending(limit=10)
+            except Exception as e:
+                print(f"⚠️ [Video Feed] Fallback failed: {e}")
+                videos = []
+        
+        # Ensure list of dicts
+        videos = [dict(v) for v in videos]
+        
+        # Translate if needed
+        if lang != 'en' and videos:
+            try:
+                for v in videos:
+                     if 'description' in v: v['snippet'] = v['description']
+                     
+                videos = translator.translate_batch(videos, lang)
+                
+                for v in videos:
+                     if 'snippet' in v: v['description'] = v['snippet']
+            except Exception as e:
+                print(f"Video Translation error: {e}")
+                pass
+                 
         return jsonify(videos)
     except Exception as e:
         print(f"Video Error: {e}")
         return jsonify([]), 500
+
+@app.route('/api/tts', methods=['POST'])
+def tts_endpoint():
+    """Text-to-Speech Endpoint using OpenAI"""
+    data = request.json
+    text = data.get('text', '')
+    if not text: return jsonify({"error": "No text provided"}), 400
+    
+    # Use Legal Assistant's client for consistency
+    audio_data = legal_assistant.speak(text)
+    
+    if audio_data:
+        from flask import Response
+        return Response(audio_data, mimetype="audio/mpeg")
+    else:
+        return jsonify({"error": "TTS generation failed"}), 500
 
 @app.route('/api/extract', methods=['POST'])
 def extract_endpoint():
@@ -265,21 +793,77 @@ def extract_endpoint():
     if not url: return jsonify({"error": "URL required"}), 400
     
     try:
+        # Resolve real URL for extraction (Fixes blank Google News pages)
+        print(f"🔍 DEBUG: Extraction Request for: {url} (Type: {type(url)})")
+        resolved_url = news_feeder._resolve_url(url)
+        print(f"🔍 DEBUG: Resolved URL: {resolved_url} (Type: {type(resolved_url)})")
+        
+        # Ensure it's not a coroutine
+        if hasattr(resolved_url, '__await__'):
+             print("⚠️ CRITICAL ERROR: resolved_url is a COROUTINE!")
+             import asyncio
+             resolved_url = asyncio.run(resolved_url)
+
         # 1. Track View (Real Metric)
-        views = analytics.track_view(url, topic)
+        views = 0
+        if analytics:
+            try:
+                print(f"🔍 DEBUG: Tracking view for {url}")
+                views = analytics.track_view(url, topic)
+                print(f"✅ DEBUG: Views now {views}")
+            except Exception as ae:
+                print(f"⚠️ Analytics Error: {ae}")
         
         # 2. Extract Content
-        content = extractor.extract(url)
+        print("📖 DEBUG: Starting Extraction via extractor.extract...")
+        content_res = extractor.extract(str(resolved_url))
+        print(f"🔍 DEBUG: extractor.extract results type: {type(content_res)}")
+        
+        # Check if content_res is a coroutine
+        if hasattr(content_res, '__await__'):
+             print("⚠️ CRITICAL ERROR: extractor.extract returned a COROUTINE!")
+             import asyncio
+             content = asyncio.run(content_res)
+        else:
+             content = dict(content_res) if content_res else {'error': 'Failed to extract content'}
+
+        print(f"✅ Extraction Result: {'Success' if content and not 'error' in content else 'Failed'}")
+        
+        # 3. Translate if requested
+        lang = data.get('lang', 'en')
+        if lang != 'en' and content and not content.get('error'):
+            try:
+                print(f"🔍 DEBUG: Translating to {lang}...")
+                # Translate Title
+                if content.get('title'):
+                    t_title = translator.translate_text(content.get('title', ''), lang)
+                    if hasattr(t_title, '__await__'):
+                         import asyncio
+                         t_title = asyncio.run(t_title)
+                    content['title'] = t_title
+                    
+                # Translate Body  
+                if content.get('text'):
+                    t_text = translator.translate_text(content.get('text', ''), lang)
+                    if hasattr(t_text, '__await__'):
+                         import asyncio
+                         t_text = asyncio.run(t_text)
+                    content['text'] = t_text
+                print("✅ DEBUG: Translation complete")
+            except Exception as e:
+                print(f"Translation failed in extract: {e}")
+                import traceback
+                traceback.print_exc()
+                
         content['views'] = views # Return updated view count to frontend
         
         return jsonify(content)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-# Initialize Analytics and Predictor
-analytics = AnalyticsEngine()
-predictor = Predictor()
-legal_assistant = LegalAssistant()
-extractor = ContentExtractor()
+
+# (Removed broken global instantiations - loaded in background)
 
 
 @app.route('/api/admin/stats', methods=['GET'])
@@ -322,11 +906,14 @@ def admin_login_endpoint():
     data = request.json
     username = data.get('username')
     password = data.get('password')
-    # Admin credentials (in production, use environment variables and hashed passwords)
-    ADMIN_USERNAME = "admin"
-    ADMIN_PASSWORD = "gyanbridge123"
+    
+    # [SECURITY] Load from environment variables, fallback to defaults for backward compatibility
+    # TODO: Implement proper password hashing (bcrypt) and JWT tokens with expiration
+    ADMIN_USERNAME = os.getenv('ADMIN_USERNAME', 'admin')
+    ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD', 'gyanbridge123')
     
     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        # TODO: Replace with proper JWT token with expiration
         return jsonify({"success": True, "token": "valid_session"})
     return jsonify({"error": "Invalid username or password"}), 401
 
@@ -340,8 +927,13 @@ def superadmin_login():
     username = data.get('username')
     password = data.get('password')
     
-    # [Security] Hardcoded for now per plan
-    if username == "superadmin" and password == "genesis123":
+    # [SECURITY] Load from environment variables, fallback to defaults for backward compatibility
+    # TODO: Implement proper password hashing (bcrypt) and JWT tokens with expiration
+    SUPERADMIN_USERNAME = os.getenv('SUPERADMIN_USERNAME', 'superadmin')
+    SUPERADMIN_PASSWORD = os.getenv('SUPERADMIN_PASSWORD', 'genesis123')
+    
+    if username == SUPERADMIN_USERNAME and password == SUPERADMIN_PASSWORD:
+        # TODO: Replace with proper JWT token with expiration
         return jsonify({"success": True, "token": "super_session"})
     return jsonify({"error": "Invalid Super Admin credentials"}), 401
 
@@ -355,10 +947,24 @@ def superadmin_topics():
     success = topic_manager.update_topic(data.get('topic'), data.get('status'))
     return jsonify({"success": success})
 
+@app.route('/api/topics/toggle', methods=['POST'])
+def toggle_topic():
+    """Toggle a specific topic on/off (Called by SuperAdminDashboard)"""
+    data = request.json
+    topic = data.get('topic')
+    status = data.get('status')
+    
+    if not topic:
+        return jsonify({"success": False, "error": "Topic name required"}), 400
+    
+    success = topic_manager.update_topic(topic, status)
+    return jsonify({"success": success})
+
 @app.route('/api/topics/active', methods=['GET'])
 def active_topics_endpoint():
     """Get list of active topic names for UI Headers"""
     return jsonify({"topics": topic_manager.get_active_keywords()})
+
 
 
 @app.route('/api/admin/content', methods=['GET'])
@@ -650,6 +1256,80 @@ def ask_legal():
         print(f"Legal API Error: {e}")
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/legal/voice_interact', methods=['POST'])
+def legal_voice_interact():
+    """
+    Direct Voice Interaction:
+    1. Receive Audio Blob
+    2. STT (Whisper)
+    3. LLM (Legal Assistant)
+    4. TTS (OpenAI)
+    5. Return JSON {text, audio_base64}
+    """
+    if 'audio' not in request.files:
+        return jsonify({'error': 'No audio file provided'}), 400
+        
+    audio_file = request.files['audio']
+    lang = request.form.get('lang', 'en')
+    
+    import tempfile
+    import base64
+    from openai import OpenAI
+    
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    try:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".webm") as temp_audio:
+            audio_file.save(temp_audio.name)
+            temp_path = temp_audio.name
+            
+        print("🎤 Voice: Transcribing...")
+        with open(temp_path, "rb") as f:
+            transcription = client.audio.transcriptions.create(
+                model="whisper-1", 
+                file=f,
+                language=lang if lang in ['hi', 'ta'] else 'en'
+            )
+        user_query = transcription.text
+        print(f"🗣️ User Said: {user_query}")
+        
+        os.unlink(temp_path)
+        
+        if not user_query.strip():
+            return jsonify({'error': 'No speech detected'}), 400
+
+        print("⚖️ Legal: Consulting Expert...")
+        llm_response = legal_assistant.ask(user_query, lang=lang)
+        answer_text = llm_response.get('answer', "I could not find an answer.")
+        
+        print(f"🔊 Voice: Synthesizing Response in {lang}...")
+        # Use LegalAssistant's speak method which supports language-aware TTS
+        audio_data = legal_assistant.speak(answer_text, lang=lang)
+        
+        if audio_data:
+            audio_base64 = base64.b64encode(audio_data).decode('utf-8')
+        else:
+            # Fallback to direct OpenAI call if LegalAssistant.speak fails
+            voice_map = {'en': 'alloy', 'hi': 'nova', 'ta': 'echo'}
+            voice = voice_map.get(lang, 'alloy')
+            speech_response = client.audio.speech.create(
+                model="tts-1", 
+                voice=voice,
+                input=answer_text
+            )
+            audio_base64 = base64.b64encode(speech_response.content).decode('utf-8')
+        
+        return jsonify({
+            'query': user_query,
+            'answer': answer_text,
+            'acts': llm_response.get('acts', []),
+            'audio': f"data:audio/mp3;base64,{audio_base64}"
+        })
+
+    except Exception as e:
+        print(f"🔥 Voice Interaction Error: {e}")
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/suggestions', methods=['GET'])
 def suggestions_endpoint():
     """Proxy for Search Suggestions"""
@@ -688,5 +1368,8 @@ if __name__ == '__main__':
     # Start Video Worker (Since we are running directly with debug=False)
     print("🚀 Starting VideoEngine Background Worker...")
     video_engine.start_background_worker()
+
+    print("🚀 Starting NewsFeeder Background Worker...")
+    news_feeder.start_background_worker()
     
     app.run(host='0.0.0.0', port=port, debug=False)

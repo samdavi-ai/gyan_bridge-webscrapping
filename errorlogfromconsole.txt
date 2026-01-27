@@ -1,0 +1,28 @@
+ownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools
+2
+DashboardLayout.jsx:552 Uncaught ReferenceError: isLiked is not defined
+    at DashboardLayout.jsx:552:28
+    at Array.map (<anonymous>)
+    at DashboardLayout (DashboardLayout.jsx:545:196)
+chunk-NUMECXU6.js?v=1054a1a9:14032 The above error occurred in the <DashboardLayout> component:
+
+    at DashboardLayout (http://localhost:3000/src/components/DashboardLayout.jsx:35:23)
+    at RequireProfile (http://localhost:3000/src/App.jsx:28:27)
+    at RenderedRoute (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:6301:26)
+    at Outlet (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:7082:26)
+    at ProtectedRoute (http://localhost:3000/src/components/auth/ProtectedRoute.jsx:23:29)
+    at RenderedRoute (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:6301:26)
+    at Routes (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:7150:3)
+    at AppContent (http://localhost:3000/src/App.jsx:46:28)
+    at Router (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:7091:13)
+    at BrowserRouter (http://localhost:3000/node_modules/.vite/deps/react-router-dom.js?v=1054a1a9:10287:3)
+    at AuthProvider (http://localhost:3000/src/context/AuthContext.jsx:21:32)
+    at App
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
+logCapturedError	@	chunk-NUMECXU6.js?v=1054a1a9:14032
+chunk-NUMECXU6.js?v=1054a1a9:19413 Uncaught ReferenceError: isLiked is not defined
+    at DashboardLayout.jsx:552:28
+    at Array.map (<anonymous>)
+    at DashboardLayout (DashboardLayout.jsx:545:196)

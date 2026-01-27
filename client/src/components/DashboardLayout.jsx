@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import LiveAnalyticsDashboard from './AnalysisDashboard';
 import AdminDashboard from './AdminDashboard';
@@ -10,10 +9,23 @@ import VideoModal from './VideoModal';
 import ReaderModal from './ReaderModal';
 import ContextMenu from './ContextMenu';
 import LegalAssistantModal from './LegalAssistantModal';
+import TrendingSection from './TrendingSection';
 import { useTranslation } from 'react-i18next';
+import { useAuth } from '../context/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
-const DashboardLayout = ({ user, onLogout }) => {
+const DashboardLayout = () => {
     const { t, i18n } = useTranslation();
+    const { user, currentProfile, logout, switchProfile, getSavedVideos, saveVideo, unsaveVideo, getSavedNews, saveNews, unsaveNews } = useAuth();
+    const navigate = useNavigate();
+
+    // Check if profile is active
+    useEffect(() => {
+        if (!currentProfile) {
+            navigate('/profiles');
+        }
+    }, [currentProfile, navigate]);
+
     const [activeTab, setActiveTab] = useState('dashboard');
     const [isLegalOpen, setIsLegalOpen] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
@@ -28,33 +40,51 @@ const DashboardLayout = ({ user, onLogout }) => {
     // Data States
     const [news, setNews] = useState([]);
     const [videos, setVideos] = useState([]);
-    const [webResults, setWebResults] = useState([]); // [NEW] Web Search Results
+    const [webResults, setWebResults] = useState([]);
     const [savedItems, setSavedItems] = useState([]);
+    const [isLoadingSaved, setIsLoadingSaved] = useState(false);
 
     // UI States
     const [loading, setLoading] = useState(false);
     const [activeVideo, setActiveVideo] = useState(null);
     const [activeArticle, setActiveArticle] = useState(null);
-    const [voiceMode, setVoiceMode] = useState(false);
 
-    // Removed internal states for Legal Assistant as it's now a component
+    // Fetch saved items on profile change
+    useEffect(() => {
+        const fetchSaved = async () => {
+            if (currentProfile) {
+                setIsLoadingSaved(true);
+                try {
+                    const [videosRes, newsRes] = await Promise.all([getSavedVideos(), getSavedNews()]);
+                    // Normalize data structure
+                    // Backend returns dicts. Ensure ID consistency.
+                    // video: video_id, title, thumbnail, channel
+                    // news: url, title, source
+
+                    const formattedVideos = (videosRes || []).map(v => ({ ...v, id: v.video_id, type: 'video' }));
+                    const formattedNews = (newsRes || []).map(n => ({ ...n, id: n.url, type: 'news', url: n.url }));
+
+                    setSavedItems([...formattedVideos, ...formattedNews]);
+                } catch (e) {
+                    console.error("Failed to fetch saved items", e);
+                } finally {
+                    setIsLoadingSaved(false);
+                }
+            } else {
+                setSavedItems([]);
+            }
+        };
+        fetchSaved();
+    }, [currentProfile]);
 
     useEffect(() => {
-        // [PERSISTENCE] Restore language handled by i18n.js
-        // const savedLang = localStorage.getItem('gb_language');
-        // if (savedLang && savedLang !== i18n.language) {
-        //     i18n.changeLanguage(savedLang);
-        // }
-
         fetchNews();
         fetchVideos();
-        const saved = JSON.parse(localStorage.getItem('gb_saved') || '[]');
-        setSavedItems(saved);
+        // Restore local preferences (liked/not interested) - Keep these local for now or move to backend later
         const notInterested = JSON.parse(localStorage.getItem('gb_not_interested') || '[]');
         setNotInterestedItems(notInterested);
         const liked = JSON.parse(localStorage.getItem('gb_liked') || '[]');
         setLikedItems(liked);
-        setActiveTab('dashboard');
     }, []);
 
     // Refresh content when language changes & Save Preference
@@ -63,6 +93,15 @@ const DashboardLayout = ({ user, onLogout }) => {
         fetchNews();
         fetchVideos();
     }, [i18n.language]);
+
+    // Persist local preferences
+    useEffect(() => {
+        localStorage.setItem('gb_liked', JSON.stringify(likedItems));
+    }, [likedItems]);
+
+    useEffect(() => {
+        localStorage.setItem('gb_not_interested', JSON.stringify(notInterestedItems));
+    }, [notInterestedItems]);
 
     const fetchNews = async () => {
         try {
@@ -80,132 +119,77 @@ const DashboardLayout = ({ user, onLogout }) => {
         } catch (e) { console.error("Failed to fetch videos", e); }
     };
 
-    const handleSearch = (query) => {
-        if (!query || query.trim() === '') return;
-        setSearchQuery(query);
-        setLoading(true);
-        console.log(`🔍 [Frontend] Dashboard search triggered: "${query}"`);
-        Promise.all([
-            fetch(`/api/news?q=${encodeURIComponent(query)}&lang=${i18n.language}`)
-                .then(r => {
-                    if (!r.ok) throw new Error(`News API: ${r.status}`);
-                    return r.json();
-                })
-                .catch(err => {
-                    console.error('❌ News search failed:', err);
-                    return [];
-                }),
-            fetch(`/api/videos?q=${encodeURIComponent(query)}&lang=${i18n.language}`, {
-                signal: AbortSignal.timeout(30000)
-            })
-                .then(r => {
-                    if (!r.ok) throw new Error(`Video API: ${r.status}`);
-                    return r.json();
-                })
-                .catch(err => {
-                    console.error('❌ Video search failed:', err);
-                    return [];
-                }),
-            // [NEW] Fetch Web Results
-            fetch('/api/search', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ topic: query, type: 'web', lang: i18n.language }),
-                signal: AbortSignal.timeout(30000)
-            })
-                .then(r => {
-                    if (!r.ok) throw new Error(`Web API: ${r.status}`);
-                    return r.json();
-                })
-                .catch(err => {
-                    console.error('❌ Web search failed:', err);
-                    return { results: [] };
-                })
-        ]).then(([newsData, videoData, webData]) => {
-            console.log(`✅ [Frontend] Dashboard search complete - News: ${Array.isArray(newsData) ? newsData.length : 0}, Videos: ${Array.isArray(videoData) ? videoData.length : 0}, Web: ${Array.isArray(webData.results) ? webData.results.length : 0}`);
-            setNews(Array.isArray(newsData) ? newsData : []);
-            setVideos(Array.isArray(videoData) ? videoData : []);
-            setWebResults(Array.isArray(webData.results) ? webData.results : []);
-            setLoading(false);
-            // Stay on dashboard to show search results
-        }).catch(err => {
-            console.error('❌ [Frontend] Dashboard search error:', err);
-            setLoading(false);
-        });
+    // Helper Functions
+    const isSaved = (item) => {
+        const itemId = item.video_id || item.id || item.url;
+        return !!savedItems.find(i => (i.video_id === itemId || i.id === itemId || i.url === itemId));
     };
 
-    const handleNewsSearch = (query) => {
-        if (!query || query.trim() === '') {
-            fetchNews();
-            return;
-        }
-        setNewsSearchQuery(query);
-        setLoading(true);
-        console.log(`🔍 [Frontend] News search triggered: "${query}"`);
-        fetch(`/api/news?q=${encodeURIComponent(query)}&lang=${i18n.language}`)
-            .then(r => {
-                if (!r.ok) {
-                    throw new Error(`HTTP ${r.status}: ${r.statusText}`);
-                }
-                return r.json();
-            })
-            .then(data => {
-                console.log(`✅ [Frontend] News search results: ${Array.isArray(data) ? data.length : 0} items`);
-                setNews(Array.isArray(data) ? data : []);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error('❌ [Frontend] News search error:', err);
-                setLoading(false);
-                setNews([]); // Clear results on error
-            });
+    const isLiked = (item) => {
+        return !!likedItems.find(i => i.id === item.id || i.url === item.url);
     };
 
-    const handleVideosSearch = (query) => {
-        if (!query || query.trim() === '') {
-            fetchVideos();
-            return;
-        }
-        setVideosSearchQuery(query);
-        setLoading(true);
-        console.log(`🔍 [Frontend] Video search triggered: "${query}"`);
-        fetch(`/api/videos?q=${encodeURIComponent(query)}&lang=${i18n.language}`, {
-            signal: AbortSignal.timeout(30000) // 30 second timeout
-        })
-            .then(r => {
-                if (!r.ok) {
-                    throw new Error(`HTTP ${r.status}: ${r.statusText}`);
-                }
-                return r.json();
-            })
-            .then(data => {
-                console.log(`✅ [Frontend] Video search results: ${Array.isArray(data) ? data.length : 0} items`);
-                setVideos(Array.isArray(data) ? data : []);
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error('❌ [Frontend] Video search error:', err);
-                setLoading(false);
-                setVideos([]); // Clear results on error
-            });
+    const isNotInterested = (item) => {
+        return notInterestedItems.some(i => (i.id === item.id || i.url === item.url));
     };
 
-    const toggleSave = (item) => {
-        let newSaved;
-        if (savedItems.find(i => i.id === item.id || i.url === item.url)) {
-            newSaved = savedItems.filter(i => i.id !== item.id && i.url !== item.url);
+    const filterContent = (items) => {
+        return (items || []).filter(item => !isNotInterested(item));
+    };
+
+    const toggleSave = async (item) => {
+        if (!currentProfile) return;
+
+        // Determine type key ID
+        const isVideo = item.video_id || item.videoId || item.duration || item.type === 'video';
+        const itemId = item.video_id || item.id || item.url; // url used as ID for news
+
+        const isAlreadySaved = savedItems.find(i => (i.video_id === itemId || i.id === itemId || i.url === itemId || (i.id === item.id && i.type === item.type)));
+
+        let success = false;
+
+        // Optimistic Update could go here, but let's wait for success to be safe or do parallel
+        if (isAlreadySaved) {
+            // Unsave
+            if (isVideo) {
+                success = await unsaveVideo(isAlreadySaved.video_id || itemId); // Use stored video_id if available
+            } else {
+                success = await unsaveNews(item.url || itemId);
+            }
+
+            if (success) {
+                setSavedItems(prev => prev.filter(i => {
+                    const iId = i.video_id || i.id || i.url;
+                    return iId !== itemId;
+                }));
+            }
         } else {
-            newSaved = [...savedItems, item];
+            // Save
+            if (isVideo) {
+                // Ensure video object has fields backend expects
+                const videoData = {
+                    id: itemId, // Mapping to video_id
+                    videoId: itemId,
+                    title: item.title,
+                    thumbnail: item.thumbnail || item.image,
+                    channel: item.channel || item.source
+                };
+                success = await saveVideo(videoData);
+            } else {
+                const newsData = {
+                    url: item.url,
+                    title: item.title,
+                    source: item.source
+                };
+                success = await saveNews(newsData);
+            }
+
+            if (success) {
+                const newItem = { ...item, type: isVideo ? 'video' : 'news', id: itemId, video_id: isVideo ? itemId : undefined };
+                setSavedItems(prev => [newItem, ...prev]);
+            }
         }
-        setSavedItems(newSaved);
-        localStorage.setItem('gb_saved', JSON.stringify(newSaved));
     };
-
-    const isSaved = (item) => !!savedItems.find(i => i.id === item.id || i.url === item.url);
-
-    const isLiked = (item) => !!likedItems.find(i => i.id === item.id || i.url === item.url);
-
-    const isNotInterested = (item) => !!notInterestedItems.find(i => i.id === item.id || i.url === item.url);
 
     const toggleLike = (item) => {
         let newLiked;
@@ -215,21 +199,56 @@ const DashboardLayout = ({ user, onLogout }) => {
             newLiked = [...likedItems, item];
         }
         setLikedItems(newLiked);
-        localStorage.setItem('gb_liked', JSON.stringify(newLiked));
     };
 
     const markNotInterested = (item) => {
         const newNotInterested = [...notInterestedItems, item];
         setNotInterestedItems(newNotInterested);
-        localStorage.setItem('gb_not_interested', JSON.stringify(newNotInterested));
     };
 
-    // Filter out not interested items
-    const filterContent = (items) => {
-        return items.filter(item => !isNotInterested(item));
+    const handleSearch = (query) => {
+        if (!query || query.trim() === '') return;
+        setSearchQuery(query);
+        setLoading(true);
+        Promise.all([
+            fetch(`/api/news?q=${encodeURIComponent(query)}&lang=${i18n.language}`).then(r => r.ok ? r.json() : []).catch(() => []),
+            fetch(`/api/videos?q=${encodeURIComponent(query)}&lang=${i18n.language}`).then(r => r.ok ? r.json() : []).catch(() => []),
+            fetch('/api/search', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ topic: query, type: 'web', lang: i18n.language }),
+                signal: AbortSignal.timeout(30000)
+            }).then(r => r.ok ? r.json() : { results: [] }).catch(() => ({ results: [] }))
+        ]).then(([newsData, videoData, webData]) => {
+            setNews(Array.isArray(newsData) ? newsData : []);
+            setVideos(Array.isArray(videoData) ? videoData : []);
+            setWebResults(Array.isArray(webData.results) ? webData.results : []);
+            setLoading(false);
+        }).catch(err => {
+            console.error(err);
+            setLoading(false);
+        });
     };
 
-    // Removed toggleLegalDictation
+    const handleNewsSearch = (query) => {
+        if (!query || query.trim() === '') { fetchNews(); return; }
+        setNewsSearchQuery(query);
+        setLoading(true);
+        fetch(`/api/news?q=${encodeURIComponent(query)}&lang=${i18n.language}`)
+            .then(r => r.json())
+            .then(data => { setNews(Array.isArray(data) ? data : []); setLoading(false); })
+            .catch(() => { setNews([]); setLoading(false); });
+    };
+
+    const handleVideosSearch = (query) => {
+        if (!query || query.trim() === '') { fetchVideos(); return; }
+        setVideosSearchQuery(query);
+        setLoading(true);
+        fetch(`/api/videos?q=${encodeURIComponent(query)}&lang=${i18n.language}`)
+            .then(r => r.json())
+            .then(data => { setVideos(Array.isArray(data) ? data : []); setLoading(false); })
+            .catch(() => { setVideos([]); setLoading(false); });
+    };
 
     const SidebarItem = ({ id, icon, label, onClick }) => (
         <button
@@ -267,6 +286,7 @@ const DashboardLayout = ({ user, onLogout }) => {
                     <SidebarItem id="analytics" icon="ri-bar-chart-groupped-line" label={t('analytics')} />
                     <SidebarItem id="wishlist" icon="ri-heart-line" label={t('wishlist')} />
                     <SidebarItem id="legal" icon="ri-scales-3-line" label={t('legal_assistant')} onClick={() => setIsLegalOpen(true)} />
+
                 </div>
 
                 <div className="p-4 border-t border-white/10 bg-[#121215]">
@@ -283,15 +303,20 @@ const DashboardLayout = ({ user, onLogout }) => {
                     </div>
                     <div className="flex items-center gap-3">
                         <div className="w-8 h-8 rounded-full bg-purple-500/20 flex items-center justify-center text-purple-400 font-bold">
-                            {user?.username?.[0]?.toUpperCase() || 'U'}
+                            {currentProfile?.name?.[0]?.toUpperCase() || user?.full_name?.[0]?.toUpperCase() || 'U'}
                         </div>
                         <div className="flex-1 min-w-0">
-                            <p className="text-sm font-bold truncate">{user?.username || 'Guest'}</p>
+                            <p className="text-sm font-bold truncate">{currentProfile?.name || user?.full_name || 'Guest'}</p>
                             <p className="text-xs text-green-400">{t('online')}</p>
                         </div>
-                        <button onClick={onLogout} title="Logout" className="p-2 hover:bg-red-500/10 rounded-full text-red-400 transition">
-                            <i className="ri-logout-box-r-line"></i>
-                        </button>
+                        <div className="flex gap-1">
+                            <button onClick={() => navigate('/profiles')} title="Switch Profile" className="p-2 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition">
+                                <i className="ri-user-settings-line"></i>
+                            </button>
+                            <button onClick={logout} title="Logout" className="p-2 hover:bg-red-500/10 rounded-full text-red-400 transition">
+                                <i className="ri-logout-box-r-line"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -299,29 +324,24 @@ const DashboardLayout = ({ user, onLogout }) => {
             {/* Main Content Area */}
             <div className={`flex-1 flex flex-col h-full relative overflow-hidden transition-all duration-300 ${isSidebarOpen ? 'ml-64' : 'ml-0'}`}>
 
-                {/* Top Header (Search & Content Nav) */}
+                {/* Top Header */}
                 <div className="h-16 bg-[#15151A]/80 backdrop-blur-md border-b border-white/10 flex items-center justify-between px-6 z-30 sticky top-0">
-                    {/* Sidebar Toggle Button */}
                     <button
                         onClick={() => setIsSidebarOpen(!isSidebarOpen)}
                         className="p-2 rounded-lg hover:bg-white/10 transition-colors text-gray-400 hover:text-white mr-4"
-                        title={isSidebarOpen ? 'Close Sidebar' : 'Open Sidebar'}
                     >
                         <i className={`text-xl ${isSidebarOpen ? 'ri-menu-fold-line' : 'ri-menu-unfold-line'}`}></i>
                     </button>
-                    {/* Common Search Bar - Hide on News and Videos tabs as they have their own specific search */}
                     <div className={`flex-1 max-w-xl transition-opacity duration-300 ${(activeTab === 'news' || activeTab === 'videos') ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
                         <SearchSuggestions query={searchQuery} setQuery={setSearchQuery} type="web" onSelect={handleSearch} onClose={() => { }} />
                     </div>
 
-                    {/* Right Navigation */}
                     <div className="flex items-center gap-3 ml-4">
                         <NavItem id="news" label={t('news')} icon="ri-newspaper-line" />
                         <NavItem id="videos" label={t('videos')} icon="ri-video-line" />
 
                         <div className="h-6 w-px bg-white/10 mx-2"></div>
-                        <NavItem id="admin" label={t('admin')} icon="ri-shield-user-line" />
-                        <NavItem id="superadmin" label={t('super')} icon="ri-shield-keyhole-line" />
+
                     </div>
                 </div>
 
@@ -336,16 +356,17 @@ const DashboardLayout = ({ user, onLogout }) => {
                     {/* Dashboard View */}
                     {activeTab === 'dashboard' && (
                         <div className="space-y-12 animate-fade-in max-w-7xl mx-auto">
+                            {!searchQuery && (
+                                <section className="mb-8">
+                                    <TrendingSection onSelect={(topic) => handleSearch(topic)} />
+                                </section>
+                            )}
+
                             <div className="text-center py-6">
-                                <h1 className="text-3xl font-bold mb-2">
-                                    {searchQuery ? `${t('search_results')} "${searchQuery}"` : t('dashboard')}
-                                </h1>
-                                <p className="text-gray-400">
-                                    {searchQuery ? t('unified_results') : t('personalized_feed')}
-                                </p>
+                                <h1 className="text-3xl font-bold mb-2">{searchQuery ? `${t('search_results')} "${searchQuery}"` : t('dashboard')}</h1>
+                                <p className="text-gray-400">{searchQuery ? t('unified_results') : t('personalized_feed')}</p>
                             </div>
 
-                            {/* VIDEOS SECTION */}
                             <section>
                                 <div className="flex justify-between items-center mb-6">
                                     <h2 className="text-xl font-bold flex items-center gap-2"><i className="ri-video-fill text-red-500"></i> {searchQuery ? t('videos') : t('trending_videos')}</h2>
@@ -368,7 +389,6 @@ const DashboardLayout = ({ user, onLogout }) => {
                                 {searchQuery && videos.length === 0 && <p className="text-gray-500 italic">{t('no_videos')}</p>}
                             </section>
 
-                            {/* WEB RESULTS SECTION */}
                             {(webResults.length > 0) && (
                                 <section>
                                     <div className="flex justify-between items-center mb-6">
@@ -391,7 +411,6 @@ const DashboardLayout = ({ user, onLogout }) => {
                                 </section>
                             )}
 
-                            {/* NEWS SECTION */}
                             <section>
                                 <div className="flex justify-between items-center mb-6">
                                     <h2 className="text-xl font-bold flex items-center gap-2"><i className="ri-newspaper-fill text-blue-500"></i> {searchQuery ? t('news') : t('latest_news')}</h2>
@@ -420,24 +439,12 @@ const DashboardLayout = ({ user, onLogout }) => {
                         <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
                             <div className="flex items-center justify-between">
                                 <h1 className="text-3xl font-bold">News Feed</h1>
-                                <div className="w-96">
-                                    <SearchSuggestions
-                                        query={newsSearchQuery}
-                                        setQuery={setNewsSearchQuery}
-                                        type="news"
-                                        onSelect={handleNewsSearch}
-                                        onClose={() => { }}
-                                    />
-                                    {newsSearchQuery && (
-                                        <button onClick={() => { setNewsSearchQuery(''); fetchNews(); }} className="absolute -right-12 top-2 text-gray-400 hover:text-white">
-                                            <i className="ri-close-circle-line text-xl"></i>
-                                        </button>
-                                    )}
+                                <div className="relative w-96">
+                                    <SearchSuggestions query={newsSearchQuery} setQuery={setNewsSearchQuery} type="news" onSelect={handleNewsSearch} onClose={() => { }} />
+                                    {newsSearchQuery && <button onClick={() => { setNewsSearchQuery(''); fetchNews(); }} className="absolute -right-12 top-2 text-gray-400 hover:text-white"><i className="ri-close-circle-line text-xl"></i></button>}
                                 </div>
                             </div>
-                            {filterContent(news).length === 0 ? (
-                                <p className="text-gray-500 text-center py-12">{t('no_news')}</p>
-                            ) : (
+                            {filterContent(news).length === 0 ? <p className="text-gray-500 text-center py-12">{t('no_news')}</p> : (
                                 <div className="grid grid-cols-1 gap-6">
                                     {filterContent(news).map((item, i) => (
                                         <NewsCard
@@ -460,24 +467,12 @@ const DashboardLayout = ({ user, onLogout }) => {
                         <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
                             <div className="flex items-center justify-between">
                                 <h1 className="text-3xl font-bold">Video Library</h1>
-                                <div className="w-96">
-                                    <SearchSuggestions
-                                        query={videosSearchQuery}
-                                        setQuery={setVideosSearchQuery}
-                                        type="videos"
-                                        onSelect={handleVideosSearch}
-                                        onClose={() => { }}
-                                    />
-                                    {videosSearchQuery && (
-                                        <button onClick={() => { setVideosSearchQuery(''); fetchVideos(); }} className="absolute -right-12 top-2 text-gray-400 hover:text-white">
-                                            <i className="ri-close-circle-line text-xl"></i>
-                                        </button>
-                                    )}
+                                <div className="relative w-96">
+                                    <SearchSuggestions query={videosSearchQuery} setQuery={setVideosSearchQuery} type="videos" onSelect={handleVideosSearch} onClose={() => { }} />
+                                    {videosSearchQuery && <button onClick={() => { setVideosSearchQuery(''); fetchVideos(); }} className="absolute -right-12 top-2 text-gray-400 hover:text-white"><i className="ri-close-circle-line text-xl"></i></button>}
                                 </div>
                             </div>
-                            {filterContent(videos).length === 0 ? (
-                                <p className="text-gray-500 text-center py-12">{t('no_videos')}</p>
-                            ) : (
+                            {filterContent(videos).length === 0 ? <p className="text-gray-500 text-center py-12">{t('no_videos')}</p> : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                                     {filterContent(videos).map((item, i) => (
                                         <VideoCard
@@ -497,17 +492,19 @@ const DashboardLayout = ({ user, onLogout }) => {
                     )}
 
                     {activeTab === 'analytics' && <div className="max-w-7xl mx-auto"><LiveAnalyticsDashboard /></div>}
-                    {activeTab === 'admin' && <div className="max-w-7xl mx-auto"><AdminDashboard /></div>}
-                    {activeTab === 'superadmin' && <div className="max-w-7xl mx-auto"><SuperAdminDashboard /></div>}
+                    {activeTab === 'admin' && (user?.role === 'admin' || user?.role === 'superadmin') && <div className="max-w-7xl mx-auto"><AdminDashboard /></div>}
+                    {activeTab === 'superadmin' && user?.role === 'superadmin' && <div className="max-w-7xl mx-auto"><SuperAdminDashboard /></div>}
 
                     {activeTab === 'wishlist' && (
                         <div className="max-w-7xl mx-auto space-y-6 animate-fade-in">
                             <h1 className="text-3xl font-bold">Wishlist (<span className="text-purple-500">{savedItems.length}</span>)</h1>
-                            {savedItems.length === 0 ? <p className="text-gray-500">No items saved yet.</p> : (
+                            {isLoadingSaved ? (
+                                <div className="flex justify-center p-12"><div className="animate-spin text-4xl text-purple-500"><i className="ri-loader-4-line"></i></div></div>
+                            ) : savedItems.length === 0 ? <p className="text-gray-500">No items saved yet.</p> : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-                                    {savedItems.map((item, i) => item.duration ?
-                                        <VideoCard key={i} video={item} isSaved={true} onToggleSave={toggleSave} onWatch={setActiveVideo} /> :
-                                        <NewsCard key={i} article={item} isSaved={true} onToggleSave={toggleSave} onRead={setActiveArticle} />
+                                    {savedItems.map((item, i) => item.type === 'video' || item.duration ?
+                                        <VideoCard key={i} video={item} isSaved={true} onToggleSave={toggleSave} isLiked={isLiked(item)} onToggleLike={toggleLike} onNotInterested={markNotInterested} onWatch={setActiveVideo} /> :
+                                        <NewsCard key={i} article={item} isSaved={true} onToggleSave={toggleSave} isLiked={isLiked(item)} onToggleLike={toggleLike} onNotInterested={markNotInterested} onRead={setActiveArticle} />
                                     )}
                                 </div>
                             )}

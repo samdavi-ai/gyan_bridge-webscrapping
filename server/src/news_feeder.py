@@ -15,6 +15,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.parse
 from src.geo_sorter import GeoSorter
 from src.topic_manager import topic_manager
+from src.ddg_client import DDGClient # [FALLBACK]
 
 # Database Configuration
 DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'news.db')
@@ -416,16 +417,39 @@ class NewsFeeder:
                 seen_urls.add(r['url'])
                 unique_results.append(r)
         
-        # Priority Boost: JRM / Mohan C Lazarus
+        # [STRICT SUPER ADMIN FILTER] & [JRM BOOST]
+        # 1. Enforce super admin topics if active
+        # [STRICT SUPER ADMIN FILTER] & [JRM BOOST]
+        # 1. Enforce super admin topics if active
+        active_topics = topic_manager.get_active_keywords()
+        if active_topics:
+            filtered_results = []
+            priority_names = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus', 'jrm']
+            
+            for r in unique_results:
+                text_content = (r.get('title', '') + ' ' + r.get('snippet', '')).lower()
+                
+                # Condition 1: Matches Active Topic
+                matches_topic = any(t.lower() in text_content for t in active_topics)
+                
+                # Condition 2: Is Priority Content (JRM) - ALWAYS KEEP
+                is_priority = any(p in text_content for p in priority_names)
+                
+                if matches_topic or is_priority:
+                    filtered_results.append(r)
+            unique_results = filtered_results
+
+        # 2. Priority Boost: JRM / Mohan C Lazarus (Top Priority Request)
         priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus', 'jrm']
         def get_priority_score(item):
             text = (item.get('title', '') + ' ' + item.get('source', '') + ' ' + item.get('snippet', '')).lower()
             for k in priority_keywords:
-                if k in text: return 100
+                if k in text: return 10000 # Massive boost to ensure top rank
             return 1
             
         unique_results.sort(key=lambda x: (get_priority_score(x), x.get('timestamp', 0)), reverse=True)
         return self.sorter.sort_results(unique_results)[:limit]
+
 
     def search(self, query, limit=20, lang='en'):
         """Live search via Google News RSS."""
@@ -473,7 +497,7 @@ class NewsFeeder:
                      'id': hashlib.md5(real_url.encode()).hexdigest(),
                      'title': entry.title,
                      'url': real_url,
-                     'published': entry.get('published', ''),
+                     'published': entry.get('published', entry.get('updated', '')), # [FIX] Updated fallback
                      'source': feed.feed.get('title', 'Google News'),
                      'image': img,
                      'snippet': snippet,
@@ -517,7 +541,18 @@ class NewsFeeder:
                 if item.get('image') in self.BLOCKED_IMAGES:
                     item['image'] = None
             return cleaned
+            return cleaned
         except Exception as e:
+            # [FALLBACK] If Google News RSS fails or returns nothing
+            print(f"⚠️ [NewsFeeder] Primary search failed: {e}. Triggering DDG Fallback.")
+            try:
+                ddg = DDGClient()
+                fallback_results = ddg.search_news(query, limit=limit)
+                if fallback_results:
+                    print(f"🦆 [NewsFeeder] Fallback found {len(fallback_results)} news items.")
+                    return fallback_results
+            except Exception as fe:
+                print(f"❌ [NewsFeeder] Fallback also failed: {fe}")
             return []
 
     def _fetch_and_store(self):

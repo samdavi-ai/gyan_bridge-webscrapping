@@ -88,7 +88,8 @@ class Orchestrator:
         print(f"🎻 Orchestrator: Conducting '{topic}' via {engine_name}...")
         
         # 2. Refine Query (AI or Logic)
-        refined_topic = self.refiner.refine(topic)
+        # refined_topic = self.refiner.refine(topic) # DISABLED by User Request
+        refined_topic = topic
         
         # 3. Build Query List
         queries = []

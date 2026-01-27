@@ -32,34 +32,9 @@ class QueryRefiner:
     def refine(self, topic):
         """
         Input: 'music schools'
-        Output: 'Best music schools and training programs' (Balanced)
+        Output: 'music schools' (Direct Pass-through)
         """
-        # 1. Fallback (Rule-Based) - Keep it raw if simple
-        base = topic.strip()
-        refined_fallback = base
-            
-        # 2. AI Refinement (More balanced for general internet search)
-        if self.llm:
-            try:
-                # Optimized Balanced Prompt
-                prompt = f"""
-                Act as a Search Optimization Specialist.
-                Refine the user's search topic to be more effective for a web search engine.
-                Improve the query to get comprehensive, diverse, and high-quality results from across the entire internet.
-                Avoid being overly restrictive or biased unless the original topic clearly specifies a niche.
-                Output ONLY the refined query text, no quotes.
-                
-                Topic: "{topic}"
-                Refined:
-                """
-                response = self.llm.invoke(prompt)
-                refined_ai = response.content.strip().replace('"', '').replace("'", "")
-                
-                print(f"✨ AI Refined: '{topic}' -> '{refined_ai}'")
-                return refined_ai
-            except Exception as e:
-                print(f"⚠️ AI Refinement Failed: {e}")
-                return refined_fallback
-
-        # Return fallback if no AI
-        return refined_fallback
+        # [GLOBAL BYPASS] User explicitly requested NO AI refinement.
+        # Returning raw topic immediately.
+        # print(f"✨ AI Refinement Disabled: Using raw '{topic}'")
+        return topic.strip()

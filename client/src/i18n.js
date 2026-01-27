@@ -35,7 +35,12 @@ const resources = {
             "legal_placeholder": "Ask a legal question...",
             "legal_disclaimer": "AI can make mistakes. Please consult with a qualified legal professional for official advice.",
             "voice_mode": "Voice Mode",
-            "listening": "Listening..."
+            "listening": "Listening...",
+            "trend_analysis": "Trend Analysis",
+            "trend_insight": "AI-Driven Trend Insights",
+            "read_aloud": "Read Aloud",
+            "stop_reading": "Stop",
+            "reading": "Reading..."
         }
     },
     ta: {
@@ -85,7 +90,10 @@ const resources = {
             "legal_placeholder": "கேள்விகள் கேளுங்கள்...",
             "legal_disclaimer": "AI தவறுகள் செய்யலாம். அதிகாரப்பூர்வ ஆலோசனைக்கு தகுதிவாய்ந்த சட்ட நிபுணரை அணுகவும்.",
             "voice_mode": "குரல் முறை",
-            "listening": "கேட்கிறது..."
+            "listening": "கேட்கிறது...",
+            "read_aloud": "சத்தமாக வாசிக்கவும்",
+            "stop_reading": "நிறுத்து",
+            "reading": "வாசிக்கிறது..."
         }
     },
     hi: {
@@ -135,7 +143,10 @@ const resources = {
             "legal_placeholder": "कानूनी सवाल पूछें...",
             "legal_disclaimer": "AI गलतियाँ कर सकता है। आधिकारिक सलाह के लिए कृपया किसी योग्य कानूनी पेशेवर से परामर्श लें।",
             "voice_mode": "आवाज मोड",
-            "listening": "सुन रहा हूँ..."
+            "listening": "सुन रहा हूँ...",
+            "read_aloud": "जोर से पढ़ें",
+            "stop_reading": "रोकें",
+            "reading": "पढ़ रहा है..."
         }
     }
 };

@@ -1,9 +1,10 @@
 
+
 import React from 'react';
 import { PLACEHOLDER_IMG } from '../utils/constants';
 import ContextMenu from './ContextMenu';
-
 import { useTranslation } from 'react-i18next';
+import { formatTimeAgo } from '../utils/timeUtils';
 
 // Fixed logic errors: Remove unused getYoutubeId
 const NewsCard = ({ article, onRead, isSaved, onToggleSave, isLiked, onToggleLike, onNotInterested }) => {
@@ -43,14 +44,14 @@ const NewsCard = ({ article, onRead, isSaved, onToggleSave, isLiked, onToggleLik
                 <div className="flex flex-col gap-1">
                     <div className="hidden sm:flex items-center space-x-2 text-xs text-gray-400 mb-1">
                         <span className="font-semibold text-gray-300 truncate max-w-[120px]">{article.source}</span>
-                        <span>• {article.published_at || t('recently')}</span>
+                        <span>• {formatTimeAgo(article.published || article.timestamp)}</span>
                     </div>
                     <h3 onClick={() => onRead && onRead(article)} className="text-gray-100 font-bold text-base sm:text-lg leading-tight line-clamp-2 cursor-pointer hover:text-cyan-400 transition-colors" title={article.title}>{article.title}</h3>
                     {article.snippet && <p className="text-gray-400 text-sm leading-relaxed line-clamp-2 mt-1 sm:mt-2">{article.snippet}</p>}
                 </div>
                 <div className="flex items-center justify-between text-gray-500 text-xs mt-3 pt-3 border-t border-white/5">
                     <span className="flex items-center gap-1"><i className="ri-time-line"></i> {readTime} {t('min_read')}</span>
-                    <span className="sm:hidden">{article.published_at || t('recently')}</span>
+                    <span className="sm:hidden">{formatTimeAgo(article.timestamp || article.published)}</span>
                 </div>
             </div>
         </div>

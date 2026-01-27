@@ -57,8 +57,60 @@ class ContentExtractor:
     Extracts the main content of an article for 'Reader Mode'.
     Uses newspaper3k as primary, trafilatura as fallback.
     """
+    def _resolve_final_url(self, url):
+        """
+        Follows redirects (especially from Google News) to find the actual article URL.
+        """
+        if "news.google.com" not in url and "google.com/rss" not in url:
+            return url
+            
+        try:
+            print(f"🔗 [Extractor] Resolving redirect for: {url}")
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            })
+            
+            # Allow redirects
+            resp = session.get(url, timeout=10, allow_redirects=True)
+            
+            # Check history
+            if resp.history:
+                final = resp.url
+                if "google.com" not in final and "googleusercontent.com" not in final:
+                    print(f"✅ [Extractor] Resolved to: {final}")
+                    return final
+            
+            # Fallback: Check for 'window.location.replace' or <a> tags if JS redirect
+            if "google.com" in resp.url:
+                from bs4 import BeautifulSoup
+                soup = BeautifulSoup(resp.content, 'html.parser')
+                
+                # Check for direct link in snippet
+                links = soup.find_all('a', href=True)
+                for link in links:
+                    href = link['href']
+                    if href.startswith('http') and 'google.com' not in href:
+                         return href
+                         
+                # Check meta refresh
+                meta = soup.find('meta', attrs={'http-equiv': 'refresh'})
+                if meta:
+                     content = meta.get('content', '')
+                     if 'url=' in content:
+                         return content.split('url=')[-1].strip()
+
+        except Exception as e:
+            print(f"⚠️ [Extractor] Resolution failed: {e}")
+            
+        return url
+
     def extract(self, url):
         try:
+            # [FIX] Resolve URL first!
+            url = self._resolve_final_url(url)
+
             # [SECURITY] Validate URL to prevent SSRF attacks
             if not _is_safe_url(url):
                 return {'error': 'Invalid or unsafe URL', 'title': 'Security Error', 'text': 'The provided URL is not allowed for security reasons.'}

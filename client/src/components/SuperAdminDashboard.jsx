@@ -1,8 +1,9 @@
-
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext';
 
 const SuperAdminDashboard = () => {
-    const [token, setToken] = useState(localStorage.getItem('super_token'));
+    const { user } = useAuth();
+    const [token, setToken] = useState(localStorage.getItem('super_token') || (user?.role === 'superadmin' ? 'role_bypassed' : null));
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');

@@ -46,6 +46,9 @@ else:
 app = Flask(__name__, static_folder='../client/dist', static_url_path='/')
 CORS(app)
 
+from src.auth_routes import auth_bp
+app.register_blueprint(auth_bp, url_prefix='/api/auth')
+
 from src.video_engine import VideoEngine
 from src.topic_manager import topic_manager
 
@@ -109,10 +112,13 @@ def _trigger_initial_fetch():
     print("🔄 [Startup] Triggering initial content fetch...")
     try:
         news_feeder.update_news()
-        video_engine.populate_db()
+        # [FIX] populate_db was undefined, using force_update
+        video_engine.force_update()
         print("✅ [Startup] Initial fetch complete.")
     except Exception as e:
         print(f"⚠️ [Startup] Initial fetch failed: {e}")
+        import traceback
+        traceback.print_exc()
 
 threading.Thread(target=_trigger_initial_fetch, daemon=True).start()
 
@@ -170,6 +176,48 @@ def add_header(response):
 def health_check():
     return jsonify({"status": "ok", "service": "GyanBridge API"}), 200
 
+@app.route('/api/trending', methods=['GET'])
+def trending_endpoint():
+    """Fetch 4-5 trending topics/news titles for the dashboard."""
+    try:
+        # Get latest news from DB
+        all_news = news_feeder.get_news(limit=20)
+        
+        # Shuffle to provide variety as requested by "Try something new"
+        import random
+        random.shuffle(all_news)
+        
+        # Select 4-5 unique titles
+        results = []
+        seen_titles = set()
+        for item in all_news:
+            title = item['title'].split(' - ')[0].split(' | ')[0] # Clean source branding
+            if title not in seen_titles and len(title.split()) > 3: # Ensure it looks like a topic
+                results.append({"title": title})
+                seen_titles.add(title)
+            if len(results) >= 4:
+                break
+        
+        # Fallback if news feed is light
+        if len(results) < 4:
+            fallbacks = [
+                "Minority rights in Indian Constitution",
+                "History of Article 30 and its impact",
+                "Christian educational institutions in Tamil Nadu",
+                "Global perspective on religious freedom",
+                "Digital transformation in modern churches"
+            ]
+            for f in fallbacks:
+                if f not in seen_titles:
+                    results.append({"title": f})
+                    seen_titles.add(f)
+                if len(results) >= 4:
+                    break
+
+        return jsonify({"results": results[:4]})
+    except Exception as e:
+        return jsonify({"error": str(e), "results": []}), 500
+
 @app.route('/api/search', methods=['POST'])
 def search_endpoint():
     data = request.json
@@ -216,14 +264,13 @@ def search_endpoint():
     # ==========================================
 
     # Optional: LLM-powered refinement for certain types
+    # Optional: LLM-powered refinement (DISABLED by User Request for Direct Search)
     refined_topic = topic
-    if search_type in ['news', 'video']:
-        # For news & video we refine once here (orchestrator refines internally for 'web')
-        try:
-            refined_topic = query_refiner.refine(topic)
-        except Exception as e:
-            print(f"Query refinement failed, using raw topic. Error: {e}")
-            refined_topic = topic
+    # if search_type in ['news', 'video']:
+    #     try:
+    #         refined_topic = query_refiner.refine(topic)
+    #     except Exception as e:
+    #         refined_topic = topic
 
     # 1. Video Search
     if search_type == 'video':
@@ -257,13 +304,27 @@ def search_endpoint():
 
     # 3. Legal Search (Specialized Agent)
     elif search_type == 'legal':
-        try:
-             print(f"⚖️ API: Directing '{topic}' to Legal Assistant (Lang: {lang})")
-             result = legal_assistant.ask(topic, lang=lang)
-             return jsonify(result)
-        except Exception as e:
-             print(f"❌ Legal Search Error: {e}")
-             return jsonify({"error": str(e)}), 500
+        if not legal_assistant:
+            return jsonify({"error": "Legal Assistant is still loading. Please try again in a moment."}), 503
+        
+        print(f"⚖️ API: Directing '{topic}' to Legal Assistant (Lang: {lang})")
+        result = legal_assistant.ask(topic, lang=lang)
+        
+        # [JURIS VOICE MODE] Generate audio response
+        if result.get('answer'):
+            try:
+                clean_answer = result['answer']
+                for token in ['[UI:SHOW_CITATION_CARD]', '[UI:OPEN_CONTACT_FORM]', '[UI:ENABLE_MIC]']:
+                    clean_answer = clean_answer.replace(token, '')
+                
+                audio_bytes = legal_assistant.speak(clean_answer.strip(), lang=lang)
+                if audio_bytes:
+                    import base64
+                    result['audio_base64'] = base64.b64encode(audio_bytes).decode('utf-8')
+            except Exception as ex:
+                print(f"⚠️ Audio Gen Error: {ex}")
+
+        return jsonify(result)
 
     # 3. General Web Search (Orchestrator + Comprehensive Fallback)
     # Keys setup
@@ -331,7 +392,7 @@ def search_endpoint():
             'source': r.get('source_type', 'web'),
             'engine': r.get('engine', 'unknown'),
             'image': r.get('image'), 
-            'published_at': r.get('published_at'),
+            'published': r.get('published_at') or r.get('published'),
             'geo_tier': r.get('_geo_tier', 'Global'),
             'debug_score': r.get('_hybrid_score', 0)
         })
@@ -591,8 +652,10 @@ def news_endpoint():
 
         return jsonify(articles)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"News Error: {e}")
-        return jsonify([]), 500
+        return jsonify({"error": str(e), "results": []}), 500
 
 @app.route('/api/videos', methods=['GET'])
 def videos_endpoint():
@@ -607,21 +670,15 @@ def videos_endpoint():
             if not search_q:
                 return jsonify([])  # Invalid/empty after sanitization
 
-            try:
-                # LLM-powered refinement before hitting YouTube
-                if query_refiner and query_refiner.llm:
-                    refined_q = query_refiner.refine(search_q)
-                else:
-                    refined_q = search_q
-                    print("⚠️ QueryRefiner not available, using raw query")
-            except Exception as e:
-                print(f"⚠️ Video query refinement failed, using raw query. Error: {e}")
-                refined_q = search_q
+            print(f"🔍 [Video Search] Query: '{query}'")
+            # Disable AI Refinement for Videos as per user request to ensure accurate results
+            refined_q = search_q
 
             print(f"🔍 [Video Search] Query: '{query}' -> Refined: '{refined_q}'")
             # Use live YouTube search for user queries
             # [FIX] Disable strict filtering for explicit user intent to maximize results
-            videos = video_engine.search(refined_q, limit=50, lang=lang, apply_strict=False)
+            # Reduced limit to 20 to prevent scraping timeouts/blocks
+            videos = video_engine.search(refined_q, limit=20, lang=lang, apply_strict=False)
             print(f"✅ [Video Search] Found {len(videos)} videos from YouTube")
             
             # [ENHANCED] Ingest video metadata into RAG for better search
@@ -672,7 +729,7 @@ def videos_endpoint():
                     
                     # Filter by active topics BUT allow Priority Content (JRM)
                     filtered_videos = []
-                    priority_keywords = ['jesus redeems', 'mohan c lazarus', 'comforter tv', 'nalumavadi', 'jrm']
+                    priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus', 'comforter tv', 'nalumavadi', 'jrm']
                     
                     # Define loose keywords for specific topics (Shared logic)
                     topic_keywords = {
@@ -764,8 +821,10 @@ def videos_endpoint():
                  
         return jsonify(videos)
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"Video Error: {e}")
-        return jsonify([]), 500
+        return jsonify({"error": str(e), "results": []}), 500
 
 @app.route('/api/tts', methods=['POST'])
 def tts_endpoint():
@@ -1245,12 +1304,13 @@ def ask_legal():
     data = request.json
     query = data.get('query')
     lang = data.get('lang', 'en')
+    generate_audio = data.get('generate_audio', False)  # New: Opt-in TTS
     
     if not query:
         return jsonify({'error': 'Query is required'}), 400
     
     try:
-        result = legal_assistant.ask(query, lang=lang)
+        result = legal_assistant.ask(query, lang=lang, generate_audio=generate_audio)
         return jsonify(result)
     except Exception as e:
         print(f"Legal API Error: {e}")

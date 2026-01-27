@@ -1,39 +1,53 @@
-
-/* eslint-disable */
-import React, { useState, useEffect } from 'react';
-import LoginEntry from './components/LoginEntry';
+import React from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import LoginPage from './components/auth/LoginPage';
+import RegisterPage from './components/auth/RegisterPage';
+import OTPVerification from './components/auth/OTPVerification';
+import ProfileSelection from './components/auth/ProfileSelection';
+import ProtectedRoute from './components/auth/ProtectedRoute';
 import DashboardLayout from './components/DashboardLayout';
 import './index.css';
 
-const App = () => {
-    const [user, setUser] = useState(() => localStorage.getItem('gb_user') || null);
+const RequireProfile = ({ children }) => {
+    const { currentProfile } = useAuth();
+    if (!currentProfile) {
+        return <Navigate to="/profiles" replace />;
+    }
+    return children;
+};
 
-    const handleLogin = (u) => {
-        localStorage.setItem('gb_user', JSON.stringify(u)); // Store as JSON string or plain string depending on usage. Original was simple.
-        setUser(u);
-    };
-
-    // Fix: localStorage returns string, so we might need to parse if object stored, but existing logic was likely string or simple token.
-    // Line 987 was: const [user, setUser] = useState(() => localStorage.getItem('gb_user') || null);
-    // Line 988: const handleLogin = (u) => { localStorage.setItem('gb_user', u); setUser(u); };
-    // If 'u' is object {name: 'foo'}, then [object Object] would be stored.
-    // If LogicEntry sends {name: 'foo'}, then we should stringify.
-    // However, keeping consistent with previous simple logic for now, but improved slightly.
-
-    const handleLogout = () => {
-        localStorage.removeItem('gb_user');
-        setUser(null);
-    };
-
-    useEffect(() => {
-        const style = document.createElement('style');
-        style.innerHTML = `.animate-fade-in {animation: fadeIn 0.4s ease-out forwards; } @keyframes fadeIn {from {opacity: 0; } to {opacity: 1; } } .custom-scrollbar::-webkit-scrollbar {width: 6px; } .custom-scrollbar::-webkit-scrollbar-thumb {background: rgba(255,255,255,0.1); border-radius: 10px; }`;
-        document.head.appendChild(style);
-    }, []);
+const AppContent = () => {
+    const { logout, user } = useAuth();
 
     return (
+        <Routes>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="/register" element={<RegisterPage />} />
+            <Route path="/verify-otp" element={<OTPVerification />} />
+
+            <Route element={<ProtectedRoute />}>
+                <Route path="/profiles" element={<ProfileSelection />} />
+                <Route path="/" element={
+                    <RequireProfile>
+                        <DashboardLayout user={user} onLogout={logout} />
+                    </RequireProfile>
+                } />
+            </Route>
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+    );
+};
+
+const App = () => {
+    return (
         <React.StrictMode>
-            {!user ? <LoginEntry onLogin={handleLogin} /> : <DashboardLayout user={user} onLogout={handleLogout} />}
+            <AuthProvider>
+                <Router>
+                    <AppContent />
+                </Router>
+            </AuthProvider>
         </React.StrictMode>
     );
 };

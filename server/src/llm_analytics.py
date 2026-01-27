@@ -28,7 +28,7 @@ class LLMAnalytics:
                 return self._invoke_llm(prompt, model="gpt-3.5-turbo")
             raise e
 
-    @retry_with_backoff(retries=0, initial_delay=1)
+    @retry_with_backoff(retries=3, initial_delay=1)
     def analyze_and_graph(self, query, topic_context=None, context_docs=None, direct_context=None, lang='en'):
         """Generates a graph JSON based on the query and context."""
         
@@ -71,16 +71,24 @@ class LLMAnalytics:
         Task: Analyze the context and generate a JSON object for a graph/chart.
         {target_instruction}
 
+        PRIORITY: Look for TRENDS, TIMELINES, or COMPARISONS.
+        1. HISTORICAL DATA: Provide data for at least the past 5 years if context allows (e.g., 2021-2025). Estimate values if exact numbers aren't in snippets but a trend is clear.
+        2. FUTURE PREDICTION: Extrapolate and predict values for the next 2 years (e.g., 2026, 2027) based on the trend. MARK THESE as predictions in the insight.
+        3. CHART TYPE: ALWAYS generate a "bar" or "line" chart for trends. Only use "pie" for current-year composition.
+
         REQUIRED JSON SCHEMA:
         {{
-            "graph_type": "line" | "bar" | "pie",
-            "title": "Descriptive Graph Title",
-            "xaxis_label": "Label for X",
-            "yaxis_label": "Label for Y",
+            "graph_type": "bar" | "line" | "pie",
+            "title": "Descriptive Graph Title (e.g., 'Trend of Attacks 2021-2027')",
+            "xaxis_label": "Year",
+            "yaxis_label": "Specific Unit (e.g. 'Number of Attacks', 'Cases', 'Growth %')",
             "data": [
-                {{ "x": "Label/Year", "y": 123.45 }}
+                {{ "x": "2021", "y": 150.5 }},
+                {{ "x": "2025", "y": 200.0 }},
+                {{ "x": "2026 (Pred)", "y": 220.0 }}
             ],
-            "insight": "Brief data-backed insight.",
+            "insight": "Detailed data-backed insight explaining the trend and the logic behind predictions.",
+            "suggestions": ["Strategic suggestion 1", "Strategic suggestion 2", "Strategic suggestion 3"],
             "sentiment_score": 0.5,
             "key_entities": ["Entity1", "Entity2"],
             "sources": ["url1", "url2"],

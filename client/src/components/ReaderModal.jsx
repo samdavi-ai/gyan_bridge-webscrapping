@@ -7,8 +7,12 @@ const ReaderModal = ({ url, topic, onClose, lang }) => {
     const { t } = useTranslation();
     const [content, setContent] = useState(null);
     const [loading, setLoading] = useState(true);
+    const [retryCount, setRetryCount] = useState(0); // [FIX] Force re-fetch
 
     useEffect(() => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 60000); // [FIX] Increased to 60s for slow scraping/translation
+
         const fetchContent = async () => {
             try {
                 const isMock = url && url.startsWith('#');
@@ -25,19 +29,31 @@ const ReaderModal = ({ url, topic, onClose, lang }) => {
                     const res = await fetch('/api/extract', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ url, topic, lang })
+                        body: JSON.stringify({ url, topic, lang }),
+                        signal: controller.signal
                     });
                     const data = await res.json();
                     setContent(data);
                     setLoading(false);
                 }
             } catch (e) {
-                setContent({ error: t('failed_load') });
+                if (e.name === 'AbortError') {
+                    setContent({ error: t('request_timed_out') || "Request timed out. The server took too long to respond." });
+                } else {
+                    setContent({ error: t('failed_load') });
+                }
                 setLoading(false);
+            } finally {
+                clearTimeout(timeoutId);
             }
         };
         if (url) fetchContent();
-    }, [url, topic]);
+
+        return () => {
+            controller.abort();
+            clearTimeout(timeoutId);
+        };
+    }, [url, topic, retryCount]); // [FIX] Re-run on retryCount change
 
     if (!url) return null;
 
@@ -57,11 +73,20 @@ const ReaderModal = ({ url, topic, onClose, lang }) => {
                         <div className="flex flex-col items-center justify-center h-full text-gray-500">
                             <i className="ri-loader-4-line text-4xl animate-spin mb-4"></i>
                             <p>{t('extracting_content')}</p>
+                            <p className="text-xs mt-2 text-gray-600">This may take up to a minute...</p>
                         </div>
                     ) : (content?.error ? (
-                        <div className="text-red-400 text-center mt-20">
+                        <div className="text-red-400 text-center mt-20 flex flex-col items-center gap-4">
                             <p>{content.error}</p>
-                            <a href={url} target="_blank" rel="noreferrer" className="mt-4 inline-block text-blue-400 hover:underline">{t('open_original')}</a>
+                            <div className="flex gap-4">
+                                <button
+                                    onClick={() => { setLoading(true); setContent(null); setRetryCount(c => c + 1); }}
+                                    className="px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm text-gray-300 transition"
+                                >
+                                    Try Again
+                                </button>
+                                <a href={url} target="_blank" rel="noreferrer" className="px-4 py-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 rounded-lg text-sm transition">{t('open_original')}</a>
+                            </div>
                         </div>
                     ) : (
                         <div className="prose prose-invert prose-lg max-w-none">

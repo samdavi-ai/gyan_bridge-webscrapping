@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-    PieChart, Pie, Cell, LineChart, Line
+    PieChart, Pie, Cell, LineChart, Line, LabelList
 } from 'recharts';
 
 const AnalysisDashboard = () => {
@@ -110,45 +110,71 @@ const AnalysisDashboard = () => {
                 </div>
             </div>
 
-            {/* Trend Analysis Chart (Full Width) */}
+            {/* Trend Analysis Chart (Full Width - Premium Style) */}
             {report?.data && report?.data.length > 0 && (
-                <div className="bg-[#15151A] rounded-2xl p-8 border border-white/5 shadow-2xl">
-                    <h2 className="text-2xl font-bold mb-2 flex items-center gap-2 text-white">
-                        <i className="ri-bar-chart-groupped-line text-blue-400"></i> {report.title || t('trend_analysis')}
-                    </h2>
-                    <p className="text-gray-400 mb-6">{report.insight || t('trend_insight')}</p>
+                <div className="bg-[#15151A] rounded-2xl p-8 border border-white/5 shadow-2xl relative overflow-hidden">
+                    {/* Background Decoration */}
+                    <div className="absolute top-0 right-0 p-24 opacity-5 pointer-events-none">
+                        <i className="ri-brain-line text-9xl text-purple-500 transform rotate-12"></i>
+                    </div>
 
-                    <div className="h-80 w-full">
-                        <ResponsiveContainer width="100%" height="100%">
-                            <BarChart data={report.data} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
-                                <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} />
-                                <XAxis
-                                    dataKey="x"
-                                    stroke="#9CA3AF"
-                                    tick={{ fill: '#9CA3AF' }}
-                                    axisLine={{ stroke: '#4B5563' }}
-                                />
-                                <YAxis
-                                    stroke="#9CA3AF"
-                                    tick={{ fill: '#9CA3AF' }}
-                                    axisLine={{ stroke: '#4B5563' }}
-                                />
-                                <Tooltip
-                                    contentStyle={{ backgroundColor: '#1F1F23', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
-                                    cursor={{ fill: 'rgba(255, 255, 255, 0.05)' }}
-                                />
-                                <Bar
-                                    dataKey="y"
-                                    fill="url(#colorGradient)"
-                                    radius={[4, 4, 0, 0]}
-                                    maxBarSize={60}
-                                >
-                                    {report.data.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={index === report.data.length - 1 ? '#8B5CF6' : '#6366F1'} />
-                                    ))}
-                                </Bar>
-                            </BarChart>
-                        </ResponsiveContainer>
+                    <div className="relative z-10">
+                        <h2 className="text-2xl font-bold mb-4 text-[#22D3EE]">
+                            {report.title || t('trend_analysis')}
+                        </h2>
+                        <p className="text-gray-300 mb-10 max-w-4xl leading-relaxed text-lg">
+                            {report.insight || t('trend_insight')}
+                        </p>
+
+                        <div className="h-96 w-full mt-8">
+                            <ResponsiveContainer width="100%" height="100%">
+                                <BarChart data={report.data} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
+                                    <defs>
+                                        <linearGradient id="colorGradient" x1="0" y1="0" x2="0" y2="1">
+                                            <stop offset="0%" stopColor="#22D3EE" stopOpacity={1} />
+                                            <stop offset="100%" stopColor="#8B5CF6" stopOpacity={1} />
+                                        </linearGradient>
+                                    </defs>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#333" vertical={false} opacity={0.5} />
+                                    <XAxis
+                                        dataKey="x"
+                                        stroke="#6B7280"
+                                        tick={{ fill: '#6B7280', fontSize: 12 }}
+                                        axisLine={{ stroke: '#374151' }}
+                                        tickLine={false}
+                                        dy={10}
+                                    />
+                                    <YAxis
+                                        stroke="#6B7280"
+                                        tick={{ fill: '#6B7280', fontSize: 12 }}
+                                        axisLine={false}
+                                        tickLine={false}
+                                    />
+                                    <Tooltip
+                                        cursor={{ fill: 'rgba(34, 211, 238, 0.05)' }}
+                                        contentStyle={{
+                                            backgroundColor: '#1F1F23',
+                                            border: '1px solid #374151',
+                                            borderRadius: '12px',
+                                            color: '#fff',
+                                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+                                        }}
+                                        itemStyle={{ color: '#22D3EE', fontWeight: 'bold' }}
+                                        formatter={(value) => [value, report.yaxis_label || t('count')]}
+                                        labelStyle={{ color: '#9CA3AF', marginBottom: '4px' }}
+                                    />
+                                    <Bar
+                                        dataKey="y"
+                                        fill="url(#colorGradient)"
+                                        radius={[6, 6, 0, 0]}
+                                        maxBarSize={60}
+                                        animationDuration={1500}
+                                    >
+                                        <LabelList dataKey="y" position="top" fill="#22D3EE" fontSize={14} fontWeight="bold" formatter={(value) => value > 0 ? value : ''} />
+                                    </Bar>
+                                </BarChart>
+                            </ResponsiveContainer>
+                        </div>
                     </div>
                 </div>
             )}
@@ -157,11 +183,16 @@ const AnalysisDashboard = () => {
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
 
                 {/* Sentiment Analysis Chart */}
-                <div className="bg-[#15151A] rounded-2xl p-6 border border-white/5 shadow-xl">
-                    <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-white">
+                <div className="bg-[#15151A] rounded-2xl p-6 border border-white/5 shadow-xl relative overflow-hidden">
+                    {/* Background Decoration */}
+                    <div className="absolute -bottom-10 -left-10 p-20 opacity-5 pointer-events-none">
+                        <i className="ri-donut-chart-line text-8xl text-blue-500 transform -rotate-12"></i>
+                    </div>
+
+                    <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-white relative z-10">
                         <i className="ri-pie-chart-2-line text-blue-500"></i> {t('sentiment_distribution')}
                     </h2>
-                    <div className="h-64 w-full">
+                    <div className="h-64 w-full relative z-10">
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
                                 <Pie
@@ -170,18 +201,17 @@ const AnalysisDashboard = () => {
                                     cy="50%"
                                     innerRadius={60}
                                     outerRadius={80}
-                                    fill="#8884d8"
                                     paddingAngle={5}
                                     dataKey="value"
                                 >
                                     {sentimentData.map((entry, index) => (
-                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="rgba(0,0,0,0)" />
                                     ))}
                                 </Pie>
                                 <Tooltip
                                     contentStyle={{ backgroundColor: '#1F1F23', border: '1px solid #333', borderRadius: '8px', color: '#fff' }}
                                 />
-                                <Legend />
+                                <Legend verticalAlign="bottom" height={36} />
                             </PieChart>
                         </ResponsiveContainer>
                     </div>
@@ -201,6 +231,25 @@ const AnalysisDashboard = () => {
                         {!key_entities && <p className="text-gray-500 italic">{t('no_entities')}</p>}
                     </div>
                 </div>
+
+                {/* Suggestions Section */}
+                {report.suggestions && report.suggestions.length > 0 && (
+                    <div className="col-span-1 lg:col-span-2 bg-[#15151A] rounded-2xl p-8 border border-white/5 shadow-xl">
+                        <h2 className="text-xl font-bold mb-6 flex items-center gap-2 text-white">
+                            <i className="ri-lightbulb-flash-line text-yellow-500"></i> {t('strategic_suggestions')}
+                        </h2>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            {report.suggestions.map((suggestion, i) => (
+                                <div key={i} className="bg-black/20 p-5 rounded-xl border border-white/5 hover:border-yellow-500/30 transition flex gap-4 items-start">
+                                    <div className="w-8 h-8 rounded-full bg-yellow-500/10 flex items-center justify-center shrink-0 text-yellow-500 font-bold border border-yellow-500/20">
+                                        {i + 1}
+                                    </div>
+                                    <p className="text-gray-300 text-sm leading-relaxed">{suggestion}</p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* Sources List */}

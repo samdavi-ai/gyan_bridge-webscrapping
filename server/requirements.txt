@@ -1,6 +1,6 @@
 flask
 flask-cors
-ddgs
+duckduckgo-search
 beautifulsoup4
 requests
 pandas
@@ -24,4 +24,7 @@ langchain-openai
 langchain-text-splitters
 chromadb
 trafilatura
-
+pyjwt
+bcrypt
+deep-translator
+scrapetube

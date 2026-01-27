@@ -3,6 +3,8 @@ import json
 from openai import OpenAI
 from src.searcher import DiscoveryEngine
 from src.translator import ContentTranslator
+from src.constitutional_knowledge import get_constitutional_context
+from src.real_world_scenarios import get_real_world_scenarios
 
 class LegalAssistant:
     def __init__(self):
@@ -69,6 +71,12 @@ class LegalAssistant:
              # [FIX] Use strict India-English region to filter out foreign content
              # [OPTIMIZATION] disable news search for static legal docs to avoid timeouts
              res = self.searcher.search_web(q, max_results=3, region='in-en', include_news=False)
+             
+             # [FALLBACK] If strict region returns nothing, try global (wt-wt)
+             if not res:
+                  # print(f"  ⚠️ No acts found in in-en, trying global for: {q}")
+                  res = self.searcher.search_web(q, max_results=3, region='wt-wt', include_news=False)
+                  
              results.extend(res)
         
         # Deduplicate by URL
@@ -89,12 +97,17 @@ class LegalAssistant:
         for q in queries:
              # [OPTIMIZATION] disable news search for static procedures
              res = self.searcher.search_web(q, max_results=3, region='in-en', include_news=False)
+             
+             # [FALLBACK]
+             if not res:
+                 res = self.searcher.search_web(q, max_results=3, region='wt-wt', include_news=False)
+                 
              results.extend(res)
              
         unique = {r['url']: r for r in results}.values()
         return list(unique)[:5]
 
-    def ask(self, query, lang='en'):
+    def ask(self, query, lang='en', generate_audio=False):
         """
         Main entry point.
         Returns structured data with categories:
@@ -102,8 +115,9 @@ class LegalAssistant:
         - procedures: List of procedural guides
         - news: Related news articles
         - answer: LLM-generated summary
+        - audio_base64: (Optional) Base64-encoded audio if generate_audio=True
         """
-        print(f"⚖️ Legal Assistant: Analyzing '{query}' (Lang: {lang})...")
+        print(f"⚖️ Legal Assistant: Analyzing '{query}' (Lang: {lang}, Audio: {generate_audio})...")
         
         # [NEW] Translate Query to English for better Search Results
         english_query = query
@@ -115,29 +129,57 @@ class LegalAssistant:
         from src.topic_manager import topic_manager
         active_topics = topic_manager.get_active_keywords()
         if active_topics:
-             topic_constraint = " AND (" + " OR ".join([f'"{t}"' for t in active_topics]) + ")"
+             # [FIX] Simplified constraint for DDG compatibility (removed boolean AND/OR/Parentheses complexity)
+             topic_join = " ".join([f'{t}' for t in active_topics]) 
+             topic_constraint = f" {topic_join}"
+             
              # Prevent double strictness if user already typed it
              if not any(t.lower() in english_query.lower() for t in active_topics):
                  english_query += topic_constraint
                  print(f"🔒 [LegalAssistant] Strict Topic applied: {english_query}")
 
-        # 1. Search for Acts and Statutes (Use English Query)
-        acts_hits = self._search_acts(english_query)
+        # 1. Parallelize Searches (Speed Optimization)
+        # Use ThreadPool to run Acts, Procedures, and News searches concurrently
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        # 2. Search for Procedures (Use English Query)
-        proc_hits = self._search_procedures(english_query)
+        acts_hits = []
+        proc_hits = []
+        news_hits = []
         
-        # 3. Search for Related News (Christian legal news)
-        # [FIX] More specific query to avoid generic results like "C-DAC"
-        news_query = f"{english_query} (court OR law OR rights OR persecution) India news"
+        def run_acts():
+             return self._search_acts(english_query)
         
-        # [FIX] Force Indian region and fetch more to allow filtering
-        # [NEW] Default to 'in-en' to avoid foreign legal results
-        raw_news = self.searcher.search_web(news_query, max_results=15, region='in-en')
-        
-        # [FIX] Apply strict keyword filter
-        news_hits = self._filter_relevant_news(raw_news)[:5]
-        
+        def run_proc():
+             return self._search_procedures(english_query)
+             
+        def run_news():
+            news_query = f"{english_query} (court OR law OR rights OR persecution) India news"
+            # Try region-specific first
+            raw_news = self.searcher.search_web(news_query, max_results=10, region='in-en')
+            # Fallback to global if low results
+            if not raw_news or len(raw_news) < 2:
+                print(f"⚠️ Low results with 'in-en', retrying global search for: {news_query}")
+                raw_news = self.searcher.search_web(news_query, max_results=10, region=None)
+            
+            return self._filter_relevant_news(raw_news)[:3]
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = {
+                executor.submit(run_acts): 'acts',
+                executor.submit(run_proc): 'procs',
+                executor.submit(run_news): 'news'
+            }
+            
+            for future in as_completed(futures):
+                try:
+                    res = future.result()
+                    rtype = futures[future]
+                    if rtype == 'acts': acts_hits = res
+                    elif rtype == 'procs': proc_hits = res
+                    elif rtype == 'news': news_hits = res
+                except Exception as e:
+                    print(f"⚠️ Search Error ({futures[future]}): {e}")
+
         # 4. Prepare Context for LLM
         context_str = "--- RELEVANT ACTS & STATUTES ---\n"
         for i, item in enumerate(acts_hits, 1):
@@ -169,33 +211,105 @@ class LegalAssistant:
             topic_str = ", ".join(active_topics)
             topic_context = f"\nSuper Admin Controlled Topics: {topic_str}. Focusing on strict legal interpretation related to these areas."
 
-        system_prompt = f"""You are an Expert Indian Legal Assistant. 
-        Focus: Indian Constitutional Rights, Christianity, Minorities.
-        {topic_context}
+        # Load comprehensive knowledge bases
+        constitutional_context = get_constitutional_context()
+        real_world_context = get_real_world_scenarios()
 
-        CRITICAL LANGUAGE INSTRUCTION:
-        The user has selected: {full_lang}.
-        1. You MUST generate your ENTIRE response in {full_lang} script.
-        2. Do NOT use English script if the target is {full_lang}.
-        3. Translate ALL legal terms, headers, and explanations into {full_lang}.
+        # EXPERT INDIAN LEGAL ASSISTANT - COMPREHENSIVE CONSTITUTIONAL GUIDANCE
+        system_prompt = f"""
+### SYSTEM ROLE: EXPERT INDIAN LEGAL ASSISTANT
+
+**OPERATIONAL CONTEXT:**
+- **Environment:** Web Application (GyanBridge)
+- **Active Locale:** {lang} (English / Tamil / Hindi)
+- **Specialization:** Indian Constitutional Law, Religious Freedom, Minority Rights
+
+### CORE DIRECTIVE
+You are an EXPERT Indian Legal Assistant specializing in Constitutional Law, particularly Articles 25-30 related to religious freedom and minority rights. Your responses must be:
+1. **COMPREHENSIVE**: Provide detailed, step-by-step guidance
+2. **SPECIFIC**: Cite exact Constitutional Articles with full text
+3. **PRACTICAL**: Include required documents, procedures, authorities, and timelines
+4. **CONTEXTUAL**: Incorporate real-world scenarios and challenges faced in India
+
+### CONSTITUTIONAL KNOWLEDGE BASE
+You have access to comprehensive knowledge about:
+
+{constitutional_context}
+
+### REAL-WORLD SCENARIOS & CHALLENGES
+You are aware of practical challenges faced by minorities in India:
+
+{real_world_context}
+
+### RESPONSE STRUCTURE (MANDATORY)
+For EVERY legal query, structure your response as follows:
+
+**1. RELEVANT CONSTITUTIONAL ARTICLES**
+   - Quote the FULL TEXT of applicable articles (e.g., Articles 25, 26, 27, 28, 29, 30)
+   - Explain how each article applies to the specific situation
+
+**2. STEP-BY-STEP PROCEDURE**
+   - List exact steps to follow (numbered)
+   - Specify the sequence and dependencies
+
+**3. REQUIRED DOCUMENTS**
+   - Comprehensive list of all documents needed
+   - Format requirements and number of copies
+
+**4. AUTHORITIES INVOLVED**
+   - Government departments/offices to approach
+   - Sequence of authority engagement
+   - Contact information when available
+
+**5. TIMELINES**
+   - Expected processing time for each step
+   - Statutory deadlines if applicable
+
+**6. REAL-WORLD CONSIDERATIONS**
+   - Common challenges or obstacles
+   - Practical tips based on actual cases
+   - Alternative approaches if primary route fails
+
+**7. LEGAL DISCLAIMER**
+   - Always end with: "This is general legal information. For specific cases, consult a qualified lawyer."
+
+### DYNAMIC LANGUAGE PROTOCOL
+Respond in the user's selected language:
+
+**IF {lang} == 'en' (English)**
+- Use professional legal English
+- Cite articles in English
+- Be precise and formal
+
+**IF {lang} == 'ta' (Tamil)**
+- Use clear Tamil (Senthamil)
+- Legal terms can be in English for clarity (Tanglish acceptable)
+- Maintain respectful tone
+
+**IF {lang} == 'hi' (Hindi)**
+- Use formal Hindi (Shuddh Hindi)
+- Legal terms in Hindi where possible (e.g., 'Kanoon', 'Dhara', 'Anubandh')
+- Keep it conversational yet authoritative
+
+### LEGAL GUARDRAILS
+- **Accuracy First:** Always cite specific Constitutional Articles
+- **Jurisdiction:** Focus on Indian Law (Constitution, Acts, Rules)
+- **Disclaimer:** Always include legal disclaimer at the end
+{topic_context if topic_context else ""}
+
+### FALLBACK INSTRUCTION
+If external context is insufficient:
+1. Rely on the Constitutional Knowledge Base provided above
+2. Refer to Real-World Scenarios for practical guidance
+3. Use your internal training on Indian Constitutional Law
+4. NEVER say "I don't have enough information" - provide the best guidance possible
+5. Always cite specific articles and provide step-by-step procedures
+"""
         
-        Structure your answer in {full_lang} using CLEAR NUMBERED LISTS:
-        
-        **1. Step-by-Step Procedure**
-        (Provide a detailed 1, 2, 3... list of actions the user must take)
-        
-        **2. Legal Basis**
-        (Cite specific Acts/Sections)
-        
-        **3. Documents Required**
-        (Bulleted list of documents)
-        
-        **4. Important Notes**
-        (Warnings or additional context)
-        
-        If context is insufficient, state clearly what is known.
-        Always end with a disclaimer in {full_lang}.
-        """
+        # Check if context is effectively empty
+        if not acts_hits and not proc_hits and not news_hits:
+             print("⚠️ [LegalAssistant] Search yielded 0 results. FORCING LLM FALLBACK.")
+             system_prompt += "\n\n**CRITICAL: SEARCH FAILED. IGNORE MISSING CONTEXT. ANSWER FROM GENERAL KNOWLEDGE.**"
         
         try:
             response = self.client.chat.completions.create(
@@ -227,13 +341,26 @@ class LegalAssistant:
                 with open("debug_legal.log", "a") as f: f.write(f"GPT-3.5 Error: {str(e2)}\n")
                 answer = "I'm sorry, I encountered an error while synthesizing the legal data. Please check your API Quota or connection."
             
-        return {
+        # Build response
+        response_data = {
             "answer": answer,
             "acts": [{"title": item['title'], "url": item['url'], "snippet": item.get('metadata', {}).get('snippet', '')[:200]} for item in acts_hits],
             "procedures": [{"title": item['title'], "url": item['url'], "snippet": item.get('metadata', {}).get('snippet', '')[:200]} for item in proc_hits],
             "news": [{"title": item['title'], "url": item['url'], "snippet": item.get('metadata', {}).get('snippet', '')[:200]} for item in news_hits],
             "sources": acts_hits + proc_hits
         }
+        
+        # Optionally generate audio if requested
+        if generate_audio:
+            try:
+                audio_data = self.speak(answer, lang)
+                response_data["audio_base64"] = audio_data
+                print("🔊 [LegalAssistant] Audio generated successfully")
+            except Exception as e:
+                print(f"⚠️ [LegalAssistant] Audio generation failed: {e}")
+                response_data["audio_base64"] = None
+        
+        return response_data
 
     def speak(self, text, lang='en'):
         """

@@ -1,8 +1,10 @@
 
 import React, { useState, useEffect } from 'react';
+import { useAuth } from '../context/AuthContext'; // Assuming useAuth is in a hooks directory
 
 const AdminDashboard = () => {
-    const [token, setToken] = useState(localStorage.getItem('admin_token'));
+    const { user } = useAuth();
+    const [token, setToken] = useState(localStorage.getItem('admin_token') || (user?.role === 'superadmin' || user?.role === 'admin' ? 'role_bypassed' : null));
     const [creds, setCreds] = useState({ username: '', password: '' });
     const [error, setError] = useState('');
     const [content, setContent] = useState({ videos: [], news: [] });

@@ -1,4 +1,4 @@
-from ddgs import DDGS
+from duckduckgo_search import DDGS
 from datetime import datetime
 from youtube_transcript_api import YouTubeTranscriptApi
 import arxiv

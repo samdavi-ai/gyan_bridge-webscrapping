@@ -2,6 +2,7 @@ import React from 'react';
 import ContextMenu from './ContextMenu';
 import { PLACEHOLDER_IMG } from '../utils/constants';
 import { useTranslation } from 'react-i18next';
+import { formatTimeAgo } from '../utils/timeUtils';
 
 const VideoCard = ({ video, isSaved, onToggleSave, isLiked, onToggleLike, onNotInterested, onWatch }) => {
     const { t } = useTranslation();
@@ -51,7 +52,7 @@ const VideoCard = ({ video, isSaved, onToggleSave, isLiked, onToggleLike, onNotI
                     <h3 onClick={() => onWatch(video)} className="text-gray-100 font-bold text-base leading-tight line-clamp-2 cursor-pointer hover:text-purple-400 transition-colors" title={video.title}>{video.title}</h3>
                     <div className="flex items-center gap-2 mt-2 text-xs text-gray-400">
                         <span className="truncate max-w-[150px]">{video.channel || video.source}</span>
-                        <span>• {video.published_at || t('recently')}</span>
+                        <span>• {formatTimeAgo(video.published || video.timestamp)}</span>
                     </div>
                 </div>
             </div>

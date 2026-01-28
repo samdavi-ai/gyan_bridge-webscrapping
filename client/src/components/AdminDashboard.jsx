@@ -2,22 +2,24 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext'; // Assuming useAuth is in a hooks directory
 
+import SuperAdminDashboard from './SuperAdminDashboard';
+
 const AdminDashboard = () => {
     const { user } = useAuth();
     const [token, setToken] = useState(localStorage.getItem('admin_token') || (user?.role === 'superadmin' || user?.role === 'admin' ? 'role_bypassed' : null));
     const [creds, setCreds] = useState({ username: '', password: '' });
     const [error, setError] = useState('');
     const [content, setContent] = useState({ videos: [], news: [] });
-    const [activeView, setActiveView] = useState('videos');
+    const [activeView, setActiveView] = useState('videos'); // 'videos', 'news', 'superadmin'
     const [loading, setLoading] = useState(false);
     const [stats, setStats] = useState(null);
 
     useEffect(() => {
-        if (token) {
+        if (token && activeView !== 'superadmin') {
             fetchContent();
             fetch('/api/admin/stats').then(r => r.json()).then(setStats);
         }
-    }, [token]);
+    }, [token, activeView]);
 
     const login = async (e) => {
         e.preventDefault();
@@ -62,6 +64,20 @@ const AdminDashboard = () => {
         }).catch(() => fetchContent());
     };
 
+    if (activeView === 'superadmin') {
+        return (
+            <div className="animate-fade-in">
+                <button
+                    onClick={() => setActiveView('videos')}
+                    className="mb-4 flex items-center gap-2 text-gray-400 hover:text-white transition"
+                >
+                    <i className="ri-arrow-left-line"></i> Back to Admin Panel
+                </button>
+                <SuperAdminDashboard />
+            </div>
+        );
+    }
+
     if (!token) return (
         <div className="flex items-center justify-center min-h-[50vh]">
             <div className="p-10 w-full max-w-md bg-[#15151A] rounded-2xl border border-white/10 shadow-2xl">
@@ -84,7 +100,17 @@ const AdminDashboard = () => {
     return (
         <div className="p-8 space-y-8 animate-fade-in">
             <div className="flex justify-between items-center">
-                <h1 className="text-3xl font-bold">Admin Panel</h1>
+                <div className="flex items-center gap-4">
+                    <h1 className="text-3xl font-bold">Admin Panel</h1>
+                    {user?.role === 'superadmin' && (
+                        <button
+                            onClick={() => setActiveView('superadmin')}
+                            className="bg-red-600/20 text-red-400 hover:bg-red-600 hover:text-white px-3 py-1 text-xs font-bold uppercase rounded border border-red-500/30 transition-all"
+                        >
+                            Super Admin Access
+                        </button>
+                    )}
+                </div>
                 <button onClick={() => { localStorage.removeItem('admin_token'); setToken(null); }} className="text-red-400 text-sm hover:text-white transition">Logout</button>
             </div>
 

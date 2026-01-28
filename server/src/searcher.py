@@ -1,4 +1,4 @@
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 from datetime import datetime
 from youtube_transcript_api import YouTubeTranscriptApi
 import arxiv
@@ -158,48 +158,55 @@ class DiscoveryEngine:
         
         print(f"  🔍 Querying Web & News ({region})...")
         try:
-            with DDGS() as ddgs:
+            # [FIX] Added timeout parameter for updated DDGS support
+            with DDGS(timeout=20) as ddgs:
                 # General Search
                 gen_results = ddgs.text(topic, region=region, max_results=max_results)
-                for r in gen_results:
-                    title = r.get('title', '')
-                    body = r.get('body', '')
-                    url = r.get('href', '')
-                    
-                    # Filter non-Latin content
-                    if detect_non_latin_script(title) or detect_non_latin_script(body):
-                        continue
-                    
-                    if not validate_url(url):
-                        continue
-                        
-                    items.append({
-                        'url': url,
-                        'title': title,
-                        'source_type': 'web',
-                        'metadata': {'snippet': body}
-                    })
-                
-                # News Search
-                if include_news:
-                    news_topic = f"{topic} latest"
-                    news_results = ddgs.news(news_topic, region=region, max_results=max_results // 2)
-                    for r in news_results:
+                if gen_results:
+                    for r in gen_results:
                         title = r.get('title', '')
-                        url = r.get('url', '')
+                        body = r.get('body', '')
+                        url = r.get('href', '')
                         
-                        if detect_non_latin_script(title):
+                        # Filter non-Latin content
+                        if detect_non_latin_script(title) or detect_non_latin_script(body):
                             continue
                         
                         if not validate_url(url):
                             continue
-
+                            
                         items.append({
                             'url': url,
                             'title': title,
-                            'source_type': 'news',
-                            'metadata': {'date': r.get('date'), 'source': r.get('source')}
+                            'source_type': 'web',
+                            'metadata': {'snippet': body}
                         })
+                
+                # News Search
+                if include_news:
+                    news_topic = f"{topic} latest"
+                    try:
+                        news_results = ddgs.news(news_topic, region=region, max_results=max_results // 2)
+                        if news_results:
+                            for r in news_results:
+                                title = r.get('title', '')
+                                url = r.get('url', '')
+                                
+                                if detect_non_latin_script(title):
+                                    continue
+                                
+                                if not validate_url(url):
+                                    continue
+
+                                items.append({
+                                    'url': url,
+                                    'title': title,
+                                    'source_type': 'news',
+                                    'metadata': {'date': r.get('date'), 'source': r.get('source')}
+                                })
+                    except Exception as e:
+                        print(f"  ⚠️ News search fallback skipped: {e}")
+
         except Exception as e:
             print(f"  ❌ Web Search Error: {str(e)[:100]}")
         return items

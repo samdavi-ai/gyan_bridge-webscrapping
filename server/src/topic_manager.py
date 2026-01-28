@@ -55,6 +55,14 @@ class TopicManager:
             return True
         return False
 
+    def add_topic(self, topic):
+        """Adds a new topic and saves it."""
+        if topic and topic not in self.topics:
+            self.topics[topic] = True
+            self.save_topics()
+            return True
+        return False
+
     def get_active_keywords(self):
         """Returns a list of enabled topic names."""
         return [k for k, v in self.topics.items() if v]

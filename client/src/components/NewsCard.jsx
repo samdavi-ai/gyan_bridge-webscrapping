@@ -25,19 +25,27 @@ const NewsCard = ({ article, onRead, isSaved, onToggleSave, isLiked, onToggleLik
                 />
             </div>
             <div className="relative w-full h-48 sm:h-full sm:w-[200px] shrink-0 overflow-hidden cursor-pointer bg-[#151515]" onClick={() => onRead && onRead(article)}>
-                {article.image ? (
-                    <img
-                        src={article.image}
-                        alt={article.title}
-                        className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 opacity-90 group-hover:opacity-100"
-                        onError={(e) => { e.target.src = PLACEHOLDER_IMG; }}
-                    />
-                ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-gray-800 to-black text-gray-500">
-                        <i className="ri-newspaper-line text-3xl mb-2 opacity-50"></i>
-                        <span className="text-xs font-bold uppercase tracking-widest text-center opacity-40">{article.source}</span>
-                    </div>
-                )}
+                {(() => {
+                    const badPatterns = ["googleusercontent.com", "gstatic.com", "favicon", "avatar", "branding", "placeholder", "transparent", "pixel"];
+                    const isBadImage = article.image && badPatterns.some(p => article.image.toLowerCase().includes(p));
+
+                    if (article.image && !isBadImage) {
+                        return (
+                            <img
+                                src={article.image}
+                                alt={article.title}
+                                className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105 opacity-90 group-hover:opacity-100"
+                                onError={(e) => { e.target.parentElement.style.display = 'none'; }}
+                            />
+                        );
+                    }
+                    return (
+                        <div className="w-full h-full flex flex-col items-center justify-center p-4 bg-gradient-to-br from-gray-800 to-black text-gray-500">
+                            <i className="ri-newspaper-line text-3xl mb-2 opacity-50"></i>
+                            <span className="text-xs font-bold uppercase tracking-widest text-center opacity-40">{article.source}</span>
+                        </div>
+                    );
+                })()}
                 <div className="absolute bottom-2 left-2 px-2 py-1 bg-black/60 backdrop-blur rounded text-xs text-white font-medium sm:hidden">{article.source}</div>
             </div>
             <div className="p-4 flex flex-col flex-1 justify-between h-full overflow-hidden min-w-0">

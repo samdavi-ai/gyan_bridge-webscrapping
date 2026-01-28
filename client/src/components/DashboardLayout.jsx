@@ -119,22 +119,30 @@ const DashboardLayout = () => {
         } catch (e) { console.error("Failed to fetch videos", e); }
     };
 
-    // Helper Functions
+    // Helper Functions (DEFINED EARLY to avoid ReferenceErrors in render)
     const isSaved = (item) => {
+        if (!item) return false;
         const itemId = item.video_id || item.id || item.url;
         return !!savedItems.find(i => (i.video_id === itemId || i.id === itemId || i.url === itemId));
     };
 
     const isLiked = (item) => {
+        if (!item) return false;
         return !!likedItems.find(i => i.id === item.id || i.url === item.url);
     };
 
     const isNotInterested = (item) => {
-        return notInterestedItems.some(i => (i.id === item.id || i.url === item.url));
+        if (!item || !notInterestedItems) return false;
+        // Check both ID and URL for robust matching
+        return notInterestedItems.some(i =>
+            (i.id && item.id && i.id === item.id) ||
+            (i.url && item.url && i.url === item.url)
+        );
     };
 
     const filterContent = (items) => {
-        return (items || []).filter(item => !isNotInterested(item));
+        if (!Array.isArray(items)) return [];
+        return items.filter(item => !isNotInterested(item));
     };
 
     const toggleSave = async (item) => {
@@ -340,6 +348,17 @@ const DashboardLayout = () => {
                         <NavItem id="news" label={t('news')} icon="ri-newspaper-line" />
                         <NavItem id="videos" label={t('videos')} icon="ri-video-line" />
 
+                        {(user?.role === 'admin' || user?.role === 'superadmin') && (
+                            <>
+                                <div className="h-6 w-px bg-white/10 mx-2"></div>
+                                <NavItem
+                                    id="admin"
+                                    label="Admin"
+                                    icon="ri-shield-user-line"
+                                />
+                            </>
+                        )}
+
                         <div className="h-6 w-px bg-white/10 mx-2"></div>
 
                     </div>
@@ -353,19 +372,40 @@ const DashboardLayout = () => {
                         </div>
                     )}
 
-                    {/* Dashboard View */}
                     {activeTab === 'dashboard' && (
                         <div className="space-y-12 animate-fade-in max-w-7xl mx-auto">
-                            {!searchQuery && (
-                                <section className="mb-8">
-                                    <TrendingSection onSelect={(topic) => handleSearch(topic)} />
-                                </section>
-                            )}
+                            <div className="relative py-8 px-6 rounded-2xl bg-gradient-to-br from-indigo-900/60 via-purple-900/50 to-blue-900/40 border border-white/10 overflow-hidden shadow-2xl backdrop-blur-md group hover:border-white/20 transition-all duration-500">
+                                <div className="absolute top-0 right-0 -mt-20 -mr-20 w-80 h-80 bg-purple-500/20 rounded-full blur-[80px] opacity-70 group-hover:opacity-100 transition-opacity duration-700"></div>
+                                <div className="absolute bottom-0 left-0 -mb-20 -ml-20 w-80 h-80 bg-blue-500/20 rounded-full blur-[80px] opacity-70 group-hover:opacity-100 transition-opacity duration-700"></div>
 
-                            <div className="text-center py-6">
-                                <h1 className="text-3xl font-bold mb-2">{searchQuery ? `${t('search_results')} "${searchQuery}"` : t('dashboard')}</h1>
-                                <p className="text-gray-400">{searchQuery ? t('unified_results') : t('personalized_feed')}</p>
+                                <div className="relative flex flex-row items-center justify-between gap-6">
+                                    <div className="flex-1 text-left">
+                                        <h1 className="text-3xl font-extrabold mb-2 bg-gradient-to-r from-white via-purple-100 to-blue-100 bg-clip-text text-transparent tracking-tight leading-tight">
+                                            {searchQuery ? `${t('search_results', 'Results for')} "${searchQuery}"` : `${t('welcome_back', 'Welcome back')}, ${currentProfile?.name || user?.full_name || 'Explorer'}`}
+                                        </h1>
+                                        <p className="text-base text-gray-400 font-medium">
+                                            {searchQuery ? t('unified_results', 'Here is what we found') : t('personalized_feed', 'Your personalized feed and legal updates are ready.')}
+                                        </p>
+                                    </div>
+
+                                    {!searchQuery && (
+                                        <div className="flex gap-3">
+                                            <div className="flex items-center gap-2 px-3 py-1.5 bg-black/20 rounded-lg border border-white/5 text-xs text-green-400 font-medium backdrop-blur-sm">
+                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span> {t('live_updates', 'Live')}
+                                            </div>
+                                            <div className="flex items-center gap-2 px-3 py-1.5 bg-black/20 rounded-lg border border-white/5 text-xs text-blue-400 font-medium backdrop-blur-sm">
+                                                <i className="ri-shield-check-line"></i> {t('secure_access', 'Secure')}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-purple-500 to-blue-500 flex items-center justify-center shadow-lg shadow-purple-500/20">
+                                        <i className="ri-layout-grid-line text-xl text-white"></i>
+                                    </div>
+                                </div>
                             </div>
+
+
 
                             <section>
                                 <div className="flex justify-between items-center mb-6">
@@ -408,6 +448,12 @@ const DashboardLayout = () => {
                                             />
                                         ))}
                                     </div>
+                                </section>
+                            )}
+
+                            {!searchQuery && (
+                                <section className="mb-12">
+                                    <TrendingSection onSelect={(topic) => handleSearch(topic)} />
                                 </section>
                             )}
 

@@ -1,6 +1,7 @@
 flask
 flask-cors
 duckduckgo-search
+ddgs
 beautifulsoup4
 requests
 pandas
@@ -28,3 +29,4 @@ pyjwt
 bcrypt
 deep-translator
 scrapetube
+waitress

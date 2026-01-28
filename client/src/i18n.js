@@ -40,7 +40,8 @@ const resources = {
             "trend_insight": "AI-Driven Trend Insights",
             "read_aloud": "Read Aloud",
             "stop_reading": "Stop",
-            "reading": "Reading..."
+            "reading": "Reading...",
+            "discovery_subtitle": "Explore what is happening now"
         }
     },
     ta: {
@@ -93,7 +94,8 @@ const resources = {
             "listening": "கேட்கிறது...",
             "read_aloud": "சத்தமாக வாசிக்கவும்",
             "stop_reading": "நிறுத்து",
-            "reading": "வாசிக்கிறது..."
+            "reading": "வாசிக்கிறது...",
+            "discovery_subtitle": "இப்போது என்ன நடக்கிறது என்பதை ஆராயுங்கள்"
         }
     },
     hi: {
@@ -146,7 +148,8 @@ const resources = {
             "listening": "सुन रहा हूँ...",
             "read_aloud": "जोर से पढ़ें",
             "stop_reading": "रोकें",
-            "reading": "पढ़ रहा है..."
+            "reading": "पढ़ रहा है...",
+            "discovery_subtitle": "अब क्या हो रहा है, इसका अन्वेषण करें"
         }
     }
 };

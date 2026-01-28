@@ -140,6 +140,7 @@ const LegalAssistantModal = ({ onClose }) => {
             }
 
             // 3. Get AI Response
+            const startTime = Date.now(); // [TIMER] Start
             const r = await fetch('/api/legal/ask', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -152,6 +153,7 @@ const LegalAssistantModal = ({ onClose }) => {
 
             if (!r.ok) throw new Error("Legal service unavailable");
             const data = await r.json();
+            const duration = ((Date.now() - startTime) / 1000).toFixed(1); // [TIMER] Calculate duration
 
             let content = data.answer || "I couldn't find specific legal information on that.";
 
@@ -165,7 +167,7 @@ const LegalAssistantModal = ({ onClose }) => {
             if (data.acts?.length > 0) content += "\n\n**Relevant Acts:**\n" + data.acts.map(a => `- [${a.title}](${a.url})`).join('\n');
             if (data.news?.length > 0) content += "\n\n**Related News:**\n" + data.news.map(n => `- [${n.title}](${n.url})`).join('\n');
 
-            const aiMsg = { role: 'assistant', content };
+            const aiMsg = { role: 'assistant', content, duration }; // [TIMER] Store duration
             setMessages(prev => [...prev, aiMsg]);
 
             // 4. Save AI Message

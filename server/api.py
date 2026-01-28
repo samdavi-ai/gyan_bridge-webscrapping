@@ -10,6 +10,10 @@ if sys.platform == 'win32':
     except Exception:
         pass  # Fallback if reconfigure fails
 
+import warnings
+# Silence feedparser deprecation warnings regarding 'updated' to 'published' mapping
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="feedparser")
+
 # Load .env BEFORE other imports to ensure TF/Env vars are set
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 dotenv_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
@@ -178,45 +182,78 @@ def health_check():
 
 @app.route('/api/trending', methods=['GET'])
 def trending_endpoint():
-    """Fetch 4-5 trending topics/news titles for the dashboard."""
+    """Fetch 4-5 high-quality trending topics for discovery with categories."""
     try:
-        # Get latest news from DB
-        all_news = news_feeder.get_news(limit=20)
-        
-        # Shuffle to provide variety as requested by "Try something new"
-        import random
-        random.shuffle(all_news)
-        
-        # Select 4-5 unique titles
         results = []
         seen_titles = set()
+        
+        # Mapping helper to identify categories
+        def get_category(text):
+            text = text.lower()
+            if any(k in text for k in ['christian', 'church', 'vatican', 'pope', 'faith', 'bible', 'jesu']):
+                return 'religion'
+            if any(k in text for k in ['india', 'global', 'world', 'news', 'minister', 'missile', 'korea']):
+                return 'global'
+            if any(k in text for k in ['science', 'tech', 'ai', 'digital', 'space', 'research']):
+                return 'science'
+            if any(k in text for k in ['law', 'legal', 'rights', 'court', 'justice']):
+                return 'legal'
+            if any(k in text for k in ['sport', 'coach', 'game', 'player', 'match']):
+                return 'sports'
+            return 'general'
+
+        # 1. Start with Active Topics from TopicManager (High Relevance)
+        active_keywords = topic_manager.get_active_keywords()
+        import random
+        random.shuffle(active_keywords)
+        for topic in active_keywords[:2]:
+             results.append({"title": topic, "category": get_category(topic)})
+             seen_titles.add(topic.lower())
+
+        # 2. Extract news themes
+        all_news = news_feeder.get_news(limit=30)
+        random.shuffle(all_news)
+        
         for item in all_news:
-            title = item['title'].split(' - ')[0].split(' | ')[0] # Clean source branding
-            if title not in seen_titles and len(title.split()) > 3: # Ensure it looks like a topic
-                results.append({"title": title})
-                seen_titles.add(title)
-            if len(results) >= 4:
+            raw_title = item['title'].split(' - ')[0].split(' | ')[0]
+            if "a la carte" in raw_title.lower() or "digest" in raw_title.lower():
+                continue
+                
+            clean_title = raw_title
+            if len(clean_title.split()) > 7:
+                 if ':' in clean_title:
+                     clean_title = clean_title.split(':')[0]
+                 else:
+                     clean_title = " ".join(clean_title.split()[:5])
+            
+            if clean_title.lower() not in seen_titles and len(clean_title.split()) >= 2:
+                results.append({"title": clean_title, "category": get_category(raw_title)})
+                seen_titles.add(clean_title.lower())
+            
+            if len(results) >= 5:
                 break
         
-        # Fallback if news feed is light
-        if len(results) < 4:
+        # 3. Fallbacks
+        if len(results) < 5:
             fallbacks = [
-                "Minority rights in Indian Constitution",
-                "History of Article 30 and its impact",
-                "Christian educational institutions in Tamil Nadu",
-                "Global perspective on religious freedom",
-                "Digital transformation in modern churches"
+                ("World Interfaith Reports", "religion"),
+                ("Christian Missions 2025", "religion"),
+                ("Vatican Policy Updates", "religion"),
+                ("Global Rights Index", "legal"),
+                ("Digital Ministry Trends", "science")
             ]
-            for f in fallbacks:
-                if f not in seen_titles:
-                    results.append({"title": f})
-                    seen_titles.add(f)
-                if len(results) >= 4:
+            random.shuffle(fallbacks)
+            for f_title, f_cat in fallbacks:
+                if f_title.lower() not in seen_titles:
+                    results.append({"title": f_title, "category": f_cat})
+                    seen_titles.add(f_title.lower())
+                if len(results) >= 5:
                     break
-
-        return jsonify({"results": results[:4]})
+        
+        return jsonify({"results": results})
     except Exception as e:
-        return jsonify({"error": str(e), "results": []}), 500
+        print(f"❌ Trending Error: {e}")
+        return jsonify({"results": []})
 
 @app.route('/api/search', methods=['POST'])
 def search_endpoint():
@@ -844,83 +881,79 @@ def tts_endpoint():
 
 @app.route('/api/extract', methods=['POST'])
 def extract_endpoint():
-    """Reader Mode: Extract text AND track view"""
+    """Reader Mode: Extract text OR fallback to scrape if needed"""
+    import requests
+    import trafilatura
+    from src.extractor import ContentExtractor
+    
     data = request.json
     url = data.get('url')
-    topic = data.get('topic', '') # Optional: Triggering topic
+    topic = data.get('topic', '')
+    article_data = data.get('article', {}) # Existing metadata
     
     if not url: return jsonify({"error": "URL required"}), 400
     
     try:
-        # Resolve real URL for extraction (Fixes blank Google News pages)
-        print(f"🔍 DEBUG: Extraction Request for: {url} (Type: {type(url)})")
-        resolved_url = news_feeder._resolve_url(url)
-        print(f"🔍 DEBUG: Resolved URL: {resolved_url} (Type: {type(resolved_url)})")
+        print(f"📖 [ReaderMode] Extraction requested for: {url}")
         
-        # Ensure it's not a coroutine
-        if hasattr(resolved_url, '__await__'):
-             print("⚠️ CRITICAL ERROR: resolved_url is a COROUTINE!")
-             import asyncio
-             resolved_url = asyncio.run(resolved_url)
-
-        # 1. Track View (Real Metric)
+        # 1. Resolve URL with multiple attempts and better headers
+        ce = ContentExtractor() # Local instance for safety
+        resolved_url = ce._resolve_final_url(url)
+        
+        # 2. Track View
         views = 0
         if analytics:
-            try:
-                print(f"🔍 DEBUG: Tracking view for {url}")
-                views = analytics.track_view(url, topic)
-                print(f"✅ DEBUG: Views now {views}")
-            except Exception as ae:
-                print(f"⚠️ Analytics Error: {ae}")
+            try: views = analytics.track_view(url, topic)
+            except: pass
+            
+        # 3. Extract Content
+        print(f"🔗 [ReaderMode] Resolved URL: {resolved_url}")
+        content = ce.extract(resolved_url)
         
-        # 2. Extract Content
-        print("📖 DEBUG: Starting Extraction via extractor.extract...")
-        content_res = extractor.extract(str(resolved_url))
-        print(f"🔍 DEBUG: extractor.extract results type: {type(content_res)}")
-        
-        # Check if content_res is a coroutine
-        if hasattr(content_res, '__await__'):
-             print("⚠️ CRITICAL ERROR: extractor.extract returned a COROUTINE!")
-             import asyncio
-             content = asyncio.run(content_res)
-        else:
-             content = dict(content_res) if content_res else {'error': 'Failed to extract content'}
-
-        print(f"✅ Extraction Result: {'Success' if content and not 'error' in content else 'Failed'}")
-        
-        # 3. Translate if requested
+        # 4. Translation Logic
         lang = data.get('lang', 'en')
-        if lang != 'en' and content and not content.get('error'):
-            try:
-                print(f"🔍 DEBUG: Translating to {lang}...")
-                # Translate Title
-                if content.get('title'):
-                    t_title = translator.translate_text(content.get('title', ''), lang)
-                    if hasattr(t_title, '__await__'):
-                         import asyncio
-                         t_title = asyncio.run(t_title)
-                    content['title'] = t_title
-                    
-                # Translate Body  
-                if content.get('text'):
-                    t_text = translator.translate_text(content.get('text', ''), lang)
-                    if hasattr(t_text, '__await__'):
-                         import asyncio
-                         t_text = asyncio.run(t_text)
-                    content['text'] = t_text
-                print("✅ DEBUG: Translation complete")
-            except Exception as e:
-                print(f"Translation failed in extract: {e}")
-                import traceback
-                traceback.print_exc()
-                
-        content['views'] = views # Return updated view count to frontend
+        # Only translate if we have meaningful text
+        has_text = content and content.get('text') and len(str(content.get('text'))) > 100
         
-        return jsonify(content)
+        if lang != 'en' and has_text and not content.get('error'):
+            try:
+                if content.get('title'):
+                    content['title'] = translator.translate_text(content['title'], lang)
+                if content.get('text'):
+                    content['text'] = translator.translate_text(content['text'], lang)
+            except Exception as te:
+                print(f"⚠️ Translation failed: {te}")
+            
+        content['views'] = views
+        
+        # Ensure we always return a valid title
+        if not content.get('title'): 
+            content['title'] = article_data.get('title') or topic or "Article"
+        
+        # FINAL FAIL-SAFE: If text is STILL empty or too short
+        if not content.get('text') or len(str(content.get('text'))) < 80:
+             # Use snippet if available for a structured summary
+             snippet = article_data.get('snippet') or article_data.get('description')
+             if snippet and len(snippet) > 10:
+                 # [FIX] Force display in Reader Mode by setting text directly
+                 print(f"DEBUG: Forcing Reader Mode text for {snippet[:20]}...")
+                 content['text'] = f"<p><em>(Automated Summary)</em></p><p>{snippet}</p>"
+                 content['extraction_failed'] = False # Pretend it succeeded so UI shows the text
+             else:
+                 content['text'] = "<p>We could not extract the full text from this source. Please open the original article to read more.</p>"
+                 content['extraction_failed'] = False
+
+
+        return jsonify(content), 200
     except Exception as e:
+        print(f"❌ [ReaderMode] Endpoint Error: {e}")
         import traceback
         traceback.print_exc()
-        return jsonify({"error": str(e)}), 500
+        return jsonify({
+            "error": str(e), 
+            "title": article_data.get('title') or topic or "Error", 
+            "text": "An unexpected error occurred while processing the article. Please try again or open the original link."
+        }), 200
 
 # (Removed broken global instantiations - loaded in background)
 
@@ -1023,6 +1056,17 @@ def toggle_topic():
 def active_topics_endpoint():
     """Get list of active topic names for UI Headers"""
     return jsonify({"topics": topic_manager.get_active_keywords()})
+
+@app.route('/api/superadmin/topics/add', methods=['POST'])
+def superadmin_add_topic():
+    data = request.json
+    topic = data.get('topic')
+    if not topic: return jsonify({"error": "Topic required"}), 400
+    
+    if topic_manager.add_topic(topic):
+        return jsonify({"success": True})
+    else:
+        return jsonify({"error": "Topic already exists or invalid"}), 400
 
 
 
@@ -1432,4 +1476,13 @@ if __name__ == '__main__':
     print("🚀 Starting NewsFeeder Background Worker...")
     news_feeder.start_background_worker()
     
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # [PRODUCTION] Use Waitress for high-performance threading
+    debug_mode = os.environ.get('FLASK_DEBUG', 'False').lower() == 'true'
+    
+    if debug_mode:
+        print(f"🔧 Starting Flask Dev Server on port {port}...")
+        app.run(host='0.0.0.0', port=port, debug=True)
+    else:
+        from waitress import serve
+        print(f"🚀 Starting Waitress Production Server on port {port} (Threads=6)...")
+        serve(app, host='0.0.0.0', port=port, threads=6)

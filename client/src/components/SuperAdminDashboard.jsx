@@ -8,6 +8,7 @@ const SuperAdminDashboard = () => {
     const [password, setPassword] = useState('');
     const [error, setError] = useState('');
     const [topics, setTopics] = useState({});
+    const [newTopic, setNewTopic] = useState('');
 
     useEffect(() => {
         if (token) fetch('/api/superadmin/topics').then(r => r.json()).then(setTopics);
@@ -37,6 +38,22 @@ const SuperAdminDashboard = () => {
         });
     };
 
+    const handleAddTopic = () => {
+        if (!newTopic.trim()) return;
+        fetch('/api/superadmin/topics/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ topic: newTopic.trim() })
+        }).then(res => res.json()).then(data => {
+            if (data.success) {
+                setTopics(prev => ({ ...prev, [newTopic.trim()]: true }));
+                setNewTopic('');
+            } else {
+                alert(data.error || 'Failed to add topic');
+            }
+        });
+    };
+
     if (!token) {
         return (
             <div className="flex items-center justify-center p-6 bg-[#15151A] rounded-2xl w-full max-w-md mx-auto mt-20">
@@ -58,6 +75,24 @@ const SuperAdminDashboard = () => {
                 <button onClick={() => { setToken(null); localStorage.removeItem('super_token'); }} className="text-gray-400">Logout</button>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="md:col-span-3 p-6 rounded-xl border border-white/10 bg-white/5 flex items-center gap-4">
+                    <input
+                        type="text"
+                        value={newTopic}
+                        onChange={(e) => setNewTopic(e.target.value)}
+                        placeholder="Add new topic..."
+                        className="flex-1 bg-black/40 border border-white/10 px-4 py-2 rounded text-white outline-none focus:border-purple-500"
+                        onKeyPress={(e) => e.key === 'Enter' && handleAddTopic()}
+                    />
+                    <button
+                        onClick={handleAddTopic}
+                        disabled={!newTopic.trim()}
+                        className="bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-6 py-2 rounded font-bold transition"
+                    >
+                        Add Topic
+                    </button>
+                </div>
+
                 {Object.entries(topics).map(([topic, active]) => (
                     <div key={topic} className={`p-6 rounded-xl border ${active ? 'bg-green-500/10 border-green-500/30' : 'bg-red-500/10 border-red-500/30'}`}>
                         <div className="flex items-center justify-between mb-4">

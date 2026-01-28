@@ -15,7 +15,9 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import urllib.parse
 from src.geo_sorter import GeoSorter
 from src.topic_manager import topic_manager
+from src.resource_definitions import RSS_FEEDS
 from src.ddg_client import DDGClient # [FALLBACK]
+from newspaper import Article # [NEW] Deep Extraction Engine
 
 # Database Configuration
 DB_FILE = os.path.join(os.path.dirname(__file__), '..', 'news.db')
@@ -35,9 +37,30 @@ class NewsFeeder:
 
     def __init__(self, rag_engine=None):
         self.rag_engine = rag_engine
+        
+        # [STRICT] Block known placeholder/logo images and patterns
+        self.BAD_IMAGE_PATTERNS = [
+            "googleusercontent.com", "gstatic.com", "favicon", "logo", "avatar", 
+            "icon", "branding", "placeholder", "transparent", "pixel", "default",
+            "lh3.google", "google_news"
+        ]
+        
+        # Curated Fallback Images
+        self.FALLBACK_IMAGES = [
+            "https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1491841550275-ad7854e35ca6?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1438232992991-995b7058bbb3?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1601142634808-38923eb7c560?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1518544806352-a2221ebd0e19?auto=format&fit=crop&q=80&w=800",
+            "https://images.unsplash.com/photo-1586339949916-3e9457bef6d3?auto=format&fit=crop&q=80&w=800"
+        ]
+
         self.sorter = GeoSorter()
         self._init_db()
         self.cleanup_stale_news() # [FIX] Clean on startup
+        self.clear_bad_images_from_db() # [FIX] Purge logos on startup
         
         # Modular RSS Feeds Definition
         self.TOPIC_FEEDS = {
@@ -137,27 +160,25 @@ class NewsFeeder:
         self.fetch_interval = 60 # 1 minute
         self.session = requests.Session()
         self.session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'})
-        
-        # [STRICT] Block known placeholder/logo images
-        self.BLOCKED_IMAGES = [
-            "https://ssl.gstatic.com/gnews/logo/google_news_192.png",
-            "https://www.gstatic.com/images/branding/product/1x/gnews_512dp.png",
-            "https://lh3.googleusercontent.com/-FzM2e4gQ7pQ/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3re7r_B7oH8k9lg/s96-c/photo.jpg",
-            "https://lh3.googleusercontent.com/J6_coFbogxhRI9iM864NL_liGXvsQp2AupsKei7z0cNNfDvGUmWUy20nuUhkREQyrp54bTT=w300",
-            # Add other known junk
-        ]
-        
-        # Curated Fallback Images (News, Church, Abstract, Globe) to avoid random "Cocktails" or "Parties"
-        self.FALLBACK_IMAGES = [
-            "https://images.unsplash.com/photo-1557683316-973673baf926?auto=format&fit=crop&q=80&w=800", # Abstract Dark Gradient
-            "https://images.unsplash.com/photo-1504711434969-e33886168f5c?auto=format&fit=crop&q=80&w=800", # News/Paper
-            "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800", # Globe/Network
-            "https://images.unsplash.com/photo-1491841550275-ad7854e35ca6?auto=format&fit=crop&q=80&w=800", # Bible/Book
-            "https://images.unsplash.com/photo-1438232992991-995b7058bbb3?auto=format&fit=crop&q=80&w=800", # Church Architecture
-            "https://images.unsplash.com/photo-1601142634808-38923eb7c560?auto=format&fit=crop&q=80&w=800", # Candle
-            "https://images.unsplash.com/photo-1518544806352-a2221ebd0e19?auto=format&fit=crop&q=80&w=800", # Abstract Blue
-            "https://images.unsplash.com/photo-1586339949916-3e9457bef6d3?auto=format&fit=crop&q=80&w=800"  # Broadcast/News
-        ]
+
+    def _is_bad_image(self, url):
+        if not url: return True
+        url_lower = url.lower()
+        return any(pattern in url_lower for pattern in self.BAD_IMAGE_PATTERNS)
+
+    def clear_bad_images_from_db(self):
+        """Hard purge of all generic logos from DB."""
+        try:
+            conn = self._get_connection()
+            c = conn.cursor()
+            pattern_query = " OR ".join([f"image LIKE '%{p}%'" for p in self.BAD_IMAGE_PATTERNS])
+            c.execute(f"UPDATE news SET image = NULL WHERE {pattern_query}")
+            count = c.rowcount
+            conn.commit()
+            conn.close()
+            if count > 0: print(f"🧹 [NewsFeeder] Purged {count} bad images from Database.")
+        except Exception as e:
+            print(f"⚠️ [NewsFeeder] DB Purge failed: {e}")
 
 
     def _get_connection(self):
@@ -182,8 +203,6 @@ class NewsFeeder:
         try:
             conn = self._get_connection()
             c = conn.cursor()
-            # [CRITICAL] Enable Write-Ahead Logging to fix "database is locked" errors
-            c.execute('PRAGMA journal_mode=WAL;')
             c.execute('''
                 CREATE TABLE IF NOT EXISTS news (
                     id TEXT PRIMARY KEY,
@@ -243,6 +262,8 @@ class NewsFeeder:
         """
     def _extract_image(self, entry):
         img_url = None
+        
+        # Check standard enclosures and media tags
         if 'media_content' in entry: img_url = entry.media_content[0]['url']
         elif 'media_thumbnail' in entry: img_url = entry.media_thumbnail[0]['url']
         elif 'enclosures' in entry:
@@ -251,20 +272,15 @@ class NewsFeeder:
                     img_url = enc.href
                     break
         elif 'summary' in entry:
+            # Look for <img> tags in summary but be selective
             match = re.search(r'<img[^>]+src="([^">]+)"', entry.summary)
             if match: img_url = match.group(1)
         
-        # [STRICT] Validate Image against Block List and Patterns
+        # [STRICT VALIDATION]
         if img_url:
-            # Block Google News generic logos and placeholders
-            if any(b in img_url for b in self.BLOCKED_IMAGES):
+            if self._is_bad_image(img_url):
                 return None
-            if "google_news" in img_url or "gnews" in img_url:
-                 # Only block if it looks like a logo asset
-                 if "logo" in img_url or "icon" in img_url or "branding" in img_url:
-                     return None
-            if "gstatic.com" in img_url: return None # Block all gstatic images (usually icons)
-        
+                
         return img_url
 
     def _fetch_fallback_image(self, query):
@@ -275,9 +291,10 @@ class NewsFeeder:
         """
         try:
             with DDGS() as ddgs:
-                # Search for safe, medium-sized images
+                # Add "News" to the query for better relevance
+                search_query = f"{query} News"
                 results = ddgs.images(
-                    query, 
+                    search_query, 
                     region='wt-wt', 
                     safesearch='on', 
                     size='Medium', 
@@ -287,7 +304,7 @@ class NewsFeeder:
                 for r in results:
                     img_url = r.get('image')
                     # Double check it's not a blocked domain
-                    if img_url and not any(b in img_url for b in self.BLOCKED_IMAGES):
+                    if img_url and not any(b in img_url.lower() for b in self.BAD_IMAGE_PATTERNS):
                          return img_url
         except Exception as e:
             # Silence DNS/Connection errors to avoid log spam
@@ -299,22 +316,55 @@ class NewsFeeder:
         return None
 
     def _fetch_og_image(self, url):
-        """Aggressively fetch og:image using Trafilatura and BeautifulSoup."""
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+        """Aggressively fetch image using Trafilatura, Newspaper3k, and BeautifulSoup."""
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36'}
         try:
-            # 1. Trafilatura
+            # 1. Newspaper3k (Built-in image logic is very smart)
+            try:
+                article = Article(url)
+                article.download()
+                article.parse()
+                if article.top_image:
+                    if not self._is_bad_image(article.top_image):
+                        return article.top_image
+            except: pass
+
+            # 2. Trafilatura for deep metadata
             downloaded = trafilatura.fetch_url(url)
             if downloaded:
                 metadata = trafilatura.extract_metadata(downloaded)
-                if metadata and metadata.image: return metadata.image
+                if metadata and metadata.image:
+                    if not self._is_bad_image(metadata.image):
+                        return metadata.image
 
-            # 2. BeautifulSoup Fallback
-            resp = self.session.get(url, headers=headers, timeout=10, stream=True)
+            # 3. BeautifulSoup Fallback for various meta tags
+            resp = self.session.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 soup = BeautifulSoup(resp.content, 'html.parser')
-                og = soup.find("meta", property="og:image")
-                if og and og.get("content"): return og["content"]
-        except: pass
+                # Try common tags
+                for attr in ["property", "name"]:
+                    for val in ["og:image", "twitter:image", "thumbnail", "image", "sailthru.image", "sailthru.image.full"]:
+                        tag = soup.find("meta", {attr: val})
+                        if tag and tag.get("content"): 
+                            src = tag["content"]
+                            if not self._is_bad_image(src):
+                                return src
+                
+                # Check for link rel="image_src"
+                link_tag = soup.find("link", rel="image_src")
+                if link_tag and link_tag.get("href"):
+                    if not self._is_bad_image(link_tag["href"]):
+                        return link_tag["href"]
+                
+                # Try finding the first large-ish image in the body
+                first_img = soup.find("img", {"src": True})
+                if first_img:
+                    src = first_img["src"]
+                    if not self._is_bad_image(src):
+                        return urllib.parse.urljoin(url, src)
+        except Exception as e:
+            # print(f"⚠️ [ImageFetch] Error for {url}: {e}")
+            pass
         return None
 
     def get_news(self, limit=50):
@@ -340,9 +390,11 @@ class NewsFeeder:
             if item.get('timestamp'):
                 item['published'] = self._format_relative_time(float(item['timestamp']))
             
-            # Strip out any legacy fallback images so frontend can use its own placeholder
-            if item.get('image') in self.FALLBACK_IMAGES:
-                item['image'] = None
+            # Ensure every item has an image (or at least a topic-based fallback from our list)
+            if not item.get('image'):
+                # Select a consistent fallback based on title hash
+                topic_seed = sum(ord(c) for c in (item.get('title', '') + item.get('category', '')))
+                item['image'] = self.FALLBACK_IMAGES[topic_seed % len(self.FALLBACK_IMAGES)]
         
         # Priority Boost: JRM / Mohan C Lazarus
         priority_keywords = ['jesus redeems', 'mohan c lazarus', 'mohan c. lazarus']
@@ -488,6 +540,9 @@ class NewsFeeder:
                  if not img:
                       clean_title = re.sub(r'[^\w\s]', '', entry.title)
                       img = self._fetch_fallback_image(clean_title)
+                      if img: print(f"🔍 [NewsFeeder] Fallback image found for: {entry.title[:30]}...")
+                 else:
+                      print(f"🖼️ [NewsFeeder] Source image found for: {entry.title[:30]}...")
 
                  snippet = ""
                  if 'summary' in entry:
@@ -497,7 +552,7 @@ class NewsFeeder:
                      'id': hashlib.md5(real_url.encode()).hexdigest(),
                      'title': entry.title,
                      'url': real_url,
-                     'published': entry.get('published', entry.get('updated', '')), # [FIX] Updated fallback
+                     'published': entry.published if 'published' in entry else (entry.updated if 'updated' in entry else ''),
                      'source': feed.feed.get('title', 'Google News'),
                      'image': img,
                      'snippet': snippet,
@@ -536,9 +591,9 @@ class NewsFeeder:
                 except Exception as e:
                     print(f"⚠️ [NewsFeeder] Failed to persist search results: {e}")
 
-            # Filter blocked images
+            # Filter blocked images using pattern matching
             for item in cleaned:
-                if item.get('image') in self.BLOCKED_IMAGES:
+                if self._is_bad_image(item.get('image')):
                     item['image'] = None
             return cleaned
             return cleaned
@@ -618,10 +673,13 @@ class NewsFeeder:
                  clean_title = re.sub(r'[^\w\s]', '', title)
                  img = self._fetch_fallback_image(clean_title)
             
-            ts = time.mktime(entry.published_parsed) if hasattr(entry, 'published_parsed') and entry.published_parsed else time.time()
+            ts_struct = entry.published_parsed if 'published_parsed' in entry else (entry.updated_parsed if 'updated_parsed' in entry else None)
+            ts = time.mktime(ts_struct) if ts_struct else time.time()
+            
             snippet = BeautifulSoup(entry.get('summary', ''), "html.parser").get_text(separator=" ", strip=True)[:200]
 
-            prepared_data.append((sid, title, real_url, entry.get('published', ''), source, img, entry.get('guid', url), ts, snippet))
+            published_str = entry.published if 'published' in entry else (entry.updated if 'updated' in entry else '')
+            prepared_data.append((sid, title, real_url, published_str, source, img, entry.get('guid', url), ts, snippet))
         
         # Batch Insert (Fast, minimized lock time)
         if prepared_data:
@@ -634,6 +692,7 @@ class NewsFeeder:
                           prepared_data)
                 conn.commit()
                 print(f"✅ [NewsFeeder] Saved {len(prepared_data)} items.")
+                self.clear_bad_images_from_db() # [ENHANCED] Run purge after each batch
             except Exception as e:
                 print(f"❌ [NewsFeeder] DB Save Error: {e}")
             finally:

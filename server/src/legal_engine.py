@@ -39,16 +39,13 @@ class LegalAssistant:
         return filtered
 
     def _search_acts(self, query):
-        """Searches specifically for Indian Acts and Rules."""
-        # Search strategy: targeted authoritative domains + strict exclusions
-        # [FIX] Explicitly exclude Chinese domains/content which often appear for "CAN", "Act" etc.
-        base_exclusions = "-site:google.com -site:youtube.com -site:facebook.com -site:support.* -site:baidu.com -site:zhihu.com -site:*.cn"
+        """Searches specifically for Indian Acts and Rules (Optimized & Parallel)."""
+        base_exclusions = "-site:google.com -site:youtube.com -site:facebook.com -site:support.* -site:baidu.com -site:*.cn"
+        
+        # Reduced to 3 high-yield queries
         queries = [
             f'"{query}" Indian Act Section site:indiankanoon.org',
-            f'"{query}" rule gazette site:legislative.gov.in',
-            f'"{query}" act text site:indiacode.nic.in',
-            f'"{query}" original text site:nationalarchives.nic.in',
-            f'"{query}" official pdf site:s3waas.gov.in',
+            f'"{query}" act text site:indiacode.nic.in OR site:legislative.gov.in',
             f'"{query}" legal provision India {base_exclusions}'
         ]
         
@@ -61,49 +58,53 @@ class LegalAssistant:
                 "url": "https://indiacode.nic.in/bitstream/123456789/19151/1/constitution_of_india.pdf",
                 "metadata": {"snippet": "Full text of the Constitution of India including all amendments up to date. Source: India Code."}
             })
-            results.append({
-                "title": "Constitution of India (Bilingual with 105th Amendment)",
-                "url": "https://s3waas.gov.in/s380537a945c7aaa78ccfcdf1b99b5d8f/uploads/2023/05/2023050186.pdf",
-                "metadata": {"snippet": "Bilingual (Hindi/English) version of the Constitution. Source: S3WaaS."}
-            })
 
-        for q in queries:
-             # [FIX] Use strict India-English region to filter out foreign content
-             # [OPTIMIZATION] disable news search for static legal docs to avoid timeouts
-             res = self.searcher.search_web(q, max_results=3, region='in-en', include_news=False)
-             
-             # [FALLBACK] If strict region returns nothing, try global (wt-wt)
-             if not res:
-                  # print(f"  ⚠️ No acts found in in-en, trying global for: {q}")
-                  res = self.searcher.search_web(q, max_results=3, region='wt-wt', include_news=False)
-                  
-             results.extend(res)
+        # Parallel Execution
+        from concurrent.futures import ThreadPoolExecutor, as_completed
         
-        # Deduplicate by URL
+        def fetch_query(q):
+            # Try specific region first, fallback within the same thread if needed
+            res = self.searcher.search_web(q, max_results=2, region='in-en', include_news=False)
+            if not res:
+                res = self.searcher.search_web(q, max_results=2, region='wt-wt', include_news=False)
+            return res
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            futures = [executor.submit(fetch_query, q) for q in queries]
+            for future in as_completed(futures):
+                try:
+                    results.extend(future.result())
+                except Exception:
+                    pass
+        
         unique = {r['url']: r for r in results}.values()
-        return list(unique)[:5] # Keep top 5
+        return list(unique)[:5]
 
     def _search_procedures(self, query):
-        """Searches for procedural steps and forms."""
-        # Refined queries to avoid "how to login" type results
-        base_exclusions = "-site:google.com -site:yahoo.com -site:bing.com -site:support.* help topic -site:baidu.com -site:zhihu.com -site:*.cn"
+        """Searches for procedural steps and forms (Optimized & Parallel)."""
+        base_exclusions = "-site:google.com -site:yahoo.com -site:bing.com -site:support.* help topic -site:baidu.com -site:*.cn"
         queries = [
             f'{query} procedure step by step India official guide {base_exclusions}',
-            f'{query} application form government portal India',
             f'{query} required documents checklist India legal compliance'
         ]
         
         results = []
-        for q in queries:
-             # [OPTIMIZATION] disable news search for static procedures
-             res = self.searcher.search_web(q, max_results=3, region='in-en', include_news=False)
-             
-             # [FALLBACK]
-             if not res:
-                 res = self.searcher.search_web(q, max_results=3, region='wt-wt', include_news=False)
-                 
-             results.extend(res)
-             
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        
+        def fetch_query(q):
+            res = self.searcher.search_web(q, max_results=2, region='in-en', include_news=False)
+            if not res:
+                res = self.searcher.search_web(q, max_results=2, region='wt-wt', include_news=False)
+            return res
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [executor.submit(fetch_query, q) for q in queries]
+            for future in as_completed(futures):
+                try:
+                    results.extend(future.result())
+                except Exception:
+                    pass
+              
         unique = {r['url']: r for r in results}.values()
         return list(unique)[:5]
 
@@ -157,9 +158,10 @@ class LegalAssistant:
             # Try region-specific first
             raw_news = self.searcher.search_web(news_query, max_results=10, region='in-en')
             # Fallback to global if low results
+            # Fallback to global if low results
             if not raw_news or len(raw_news) < 2:
                 print(f"⚠️ Low results with 'in-en', retrying global search for: {news_query}")
-                raw_news = self.searcher.search_web(news_query, max_results=10, region=None)
+                raw_news = self.searcher.search_web(news_query, max_results=10, region='wt-wt')
             
             return self._filter_relevant_news(raw_news)[:3]
 
@@ -313,7 +315,7 @@ If external context is insufficient:
         
         try:
             response = self.client.chat.completions.create(
-                model="gpt-4o", 
+                model="gpt-4o-mini", 
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": f"User Query: {query}\n\nContext Found:\n{context_str}"}

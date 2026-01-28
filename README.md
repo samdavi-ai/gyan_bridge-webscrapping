@@ -135,3 +135,33 @@ Nebula now features **"Antigravity Analytics"**, a RAG-powered engine that lets 
 
 taskkill /F /IM python.exe /T
 taskkill /F /IM node.exe /T
+
+---
+
+## 7. 💻 Technology Stack
+
+### 🌟 1. The Frontend (Client)
+*Built for speed, interactivity, and a premium "Glassmorphism" look.*
+*   **Core Framework**: **React** (Industry standard for dynamic UIs).
+*   **Build Tool**: **Vite** (Super-fast build tool, replaces Webpack).
+*   **Styling**: **Tailwind CSS** (Utility-first CSS for gradients & responsive layouts).
+*   **Icons**: **Remix Icons** (`ri-` classes).
+*   **Routing**: **React Router** (Seamless navigation).
+
+### 🧠 2. The Backend (Server)
+*The "Brain" handling logic, AI, and data mining.*
+*   **Core Framework**: **Flask** (Lightweight Python web server).
+*   **Database**: **SQLite** (Self-contained, file-based SQL DB).
+*   **Authentication**: **JWT** + **Bcrypt** (Secure session management).
+
+### 🤖 3. The AI & Data Engine
+*The "Secret Sauce" making the app smart.*
+*   **Web Scrapers**: `Trafilatura`, `Newspaper3k`, `Feedparser`, `Scrapetube`.
+*   **AI Models**:
+    *   **OpenAI API**: Legal Assistant & TTS.
+    *   **Whisper**: Voice-to-Text.
+    *   **Scikit-Learn**: Data clustering & trend analysis.
+
+### 🔗 4. Architecture (Hybrid)
+*   **Development**: Frontend (`:3000`) proxies to Backend (`:5001`).
+*   **Production**: Backend serves static frontend files from `/dist`. A single executable Python app.
